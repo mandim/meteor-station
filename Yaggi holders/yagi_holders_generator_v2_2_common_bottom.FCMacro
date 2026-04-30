@@ -1,0 +1,251 @@
+# -*- coding: utf-8 -*-
+# FreeCAD macro v2.2 common-bottom
+# Based on v2.2 simple OPEN clamp version, with:
+# 1) NO coax channel
+# 2) same clamp bolt spacing for split and single holders
+# 3) identical bottom parts for split and single versions
+# 4) corrected top/bottom alignment around boom
+#
+# Creates:
+# - Yagi_Split_Driven_Holder_V2_2_CommonBottom
+# - Yagi_Single_Element_Holder_V2_2_CommonBottom
+#
+# Design logic:
+# - BottomHalf is the SAME geometry in both documents
+# - Only the TopHalf changes:
+#     * split version -> 2 rod holes
+#     * single version -> 1 rod hole
+#
+# Use:
+#   FreeCAD -> Macro -> Macros... -> Add Existing -> Run
+#   Save generated documents as .FCStd
+
+import FreeCAD as App
+import Part
+
+BOOM = 20.0
+BOOM_TOL = 0.4
+ROD_D = 6.0
+ROD_TOL = 0.2
+
+HOLDER_LEN = 24.0
+HOLDER_HEIGHT = 30.0
+COMMON_WIDTH = 40.0
+
+FEED_GAP = 8.0
+ROD_CENTER_ABOVE_BOOM_TOP = 10.0
+
+BOLT_D = 4.3
+BOLT_HEAD_D = 8.0
+BOLT_HEAD_H = 3.5
+NUT_FLAT = 7.2
+NUT_H = 3.4
+
+FILLET_R = 1.0
+
+BOOM_CAVITY = BOOM + BOOM_TOL
+ROD_HOLE_D = ROD_D + ROD_TOL
+HALF_H = HOLDER_HEIGHT / 2.0
+SPLIT_CENTER_SPACING = FEED_GAP + ROD_HOLE_D
+ROD_CENTER_Z_ASSEMBLED = BOOM_CAVITY + ROD_CENTER_ABOVE_BOOM_TOP
+
+
+def try_fillet(shape, radius):
+    try:
+        return shape.makeFillet(radius, shape.Edges)
+    except Exception:
+        return shape
+
+
+def hex_prism(flat, height, base_vec):
+    import math
+    radius = flat / math.sqrt(3.0)
+    pts = [
+        App.Vector(radius, 0, 0),
+        App.Vector(radius/2.0, radius*math.sqrt(3)/2.0, 0),
+        App.Vector(-radius/2.0, radius*math.sqrt(3)/2.0, 0),
+        App.Vector(-radius, 0, 0),
+        App.Vector(-radius/2.0, -radius*math.sqrt(3)/2.0, 0),
+        App.Vector(radius/2.0, -radius*math.sqrt(3)/2.0, 0),
+        App.Vector(radius, 0, 0),
+    ]
+    wire = Part.Wire(Part.makePolygon(pts))
+    face = Part.Face(wire)
+    solid = face.extrude(App.Vector(0, 0, height))
+    solid.translate(base_vec)
+    return solid
+
+
+def make_outer_block(width):
+    block = Part.makeBox(width, HOLDER_LEN, HALF_H, App.Vector(-width/2.0, -HOLDER_LEN/2.0, 0))
+    return try_fillet(block, FILLET_R)
+
+
+def rod_center_local(top_half):
+    return ROD_CENTER_Z_ASSEMBLED - HALF_H if top_half else ROD_CENTER_Z_ASSEMBLED
+
+
+def add_single_rod_cut(shape, width, top_half):
+    zc = rod_center_local(top_half)
+    cyl = Part.makeCylinder(
+        ROD_HOLE_D / 2.0,
+        width + 2.0,
+        App.Vector(-width/2.0 - 1.0, 0, zc),
+        App.Vector(1, 0, 0)
+    )
+    return shape.cut(cyl)
+
+
+def add_split_rod_cuts(shape, width, top_half):
+    zc = rod_center_local(top_half)
+    for xc in (-SPLIT_CENTER_SPACING/2.0, SPLIT_CENTER_SPACING/2.0):
+        cyl = Part.makeCylinder(
+            ROD_HOLE_D / 2.0,
+            width + 2.0,
+            App.Vector(-width/2.0 - 1.0, 0, zc),
+            App.Vector(1, 0, 0)
+        )
+        cyl.translate(App.Vector(xc, 0, 0))
+        shape = shape.cut(cyl)
+    return shape
+
+
+def bolt_x_common(width):
+    min_side_wall = 5.0
+    bolt_edge_margin = 6.0
+    default_bolt_x = width/2.0 - bolt_edge_margin
+    min_bolt_x = SPLIT_CENTER_SPACING/2.0 + ROD_HOLE_D/2.0 + min_side_wall
+    return max(default_bolt_x, min_bolt_x)
+
+
+def add_bolt_cuts_top(shape, width):
+    bx = bolt_x_common(width)
+    for x in (-bx, bx):
+        through = Part.makeCylinder(BOLT_D/2.0, HALF_H + 2.0, App.Vector(x, 0, -1.0), App.Vector(0,0,1))
+        cb = Part.makeCylinder(BOLT_HEAD_D/2.0, BOLT_HEAD_H + 0.2, App.Vector(x, 0, HALF_H - BOLT_HEAD_H), App.Vector(0,0,1))
+        shape = shape.cut(through)
+        shape = shape.cut(cb)
+    return shape
+
+
+def add_bolt_cuts_bottom(shape, width):
+    bx = bolt_x_common(width)
+    for x in (-bx, bx):
+        through = Part.makeCylinder(BOLT_D/2.0, HALF_H + 2.0, App.Vector(x, 0, -1.0), App.Vector(0,0,1))
+        nut = hex_prism(NUT_FLAT, NUT_H + 0.2, App.Vector(x, 0, -0.05))
+        shape = shape.cut(through)
+        shape = shape.cut(nut)
+    return shape
+
+
+def make_open_pocket_top(shape):
+    pocket = Part.makeBox(
+        BOOM_CAVITY,
+        HOLDER_LEN + 2.0,
+        BOOM_CAVITY/2.0 + 0.15,
+        App.Vector(-BOOM_CAVITY/2.0, -HOLDER_LEN/2.0 - 1.0, 0)
+    )
+    return shape.cut(pocket)
+
+
+def make_open_pocket_bottom(shape):
+    pocket = Part.makeBox(
+        BOOM_CAVITY,
+        HOLDER_LEN + 2.0,
+        BOOM_CAVITY/2.0 + 0.15,
+        App.Vector(-BOOM_CAVITY/2.0, -HOLDER_LEN/2.0 - 1.0, HALF_H - BOOM_CAVITY/2.0)
+    )
+    return shape.cut(pocket)
+
+
+def make_top_half(mode):
+    shape = make_outer_block(COMMON_WIDTH)
+    shape = make_open_pocket_top(shape)
+    if mode == "single":
+        shape = add_single_rod_cut(shape, COMMON_WIDTH, top_half=True)
+    else:
+        shape = add_split_rod_cuts(shape, COMMON_WIDTH, top_half=True)
+    shape = add_bolt_cuts_top(shape, COMMON_WIDTH)
+    return shape
+
+
+def make_common_bottom_half():
+    shape = make_outer_block(COMMON_WIDTH)
+    shape = make_open_pocket_bottom(shape)
+    shape = add_bolt_cuts_bottom(shape, COMMON_WIDTH)
+    return shape
+
+
+def add_shape(doc, name, shape, color):
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = shape
+    try:
+        obj.ViewObject.ShapeColor = color
+    except Exception:
+        pass
+    return obj
+
+
+def add_preview_elements(doc, mode):
+    rod_r = ROD_D/2.0
+    rod_z = ROD_CENTER_Z_ASSEMBLED
+    preview_len = COMMON_WIDTH + 18.0
+
+    if mode == "single":
+        rod = Part.makeCylinder(rod_r, preview_len, App.Vector(-preview_len/2.0, 0, rod_z), App.Vector(1,0,0))
+        add_shape(doc, "ElementPreview", rod, (0.72,0.72,0.78))
+    else:
+        left_len = preview_len/2.0 - FEED_GAP/2.0
+        right_len = preview_len/2.0 - FEED_GAP/2.0
+        left_rod = Part.makeCylinder(rod_r, left_len, App.Vector(-preview_len/2.0, 0, rod_z), App.Vector(1,0,0))
+        right_rod = Part.makeCylinder(rod_r, right_len, App.Vector(FEED_GAP/2.0, 0, rod_z), App.Vector(1,0,0))
+        add_shape(doc, "ElementPreview_Left", left_rod, (0.72,0.72,0.78))
+        add_shape(doc, "ElementPreview_Right", right_rod, (0.72,0.72,0.78))
+
+
+def build_doc(doc_name, mode):
+    doc = App.newDocument(doc_name)
+
+    top_shape = make_top_half(mode)
+    bottom_shape = make_common_bottom_half()
+
+    add_shape(doc, "BottomHalf", bottom_shape, (0.93, 0.47, 0.15))
+
+    top_preview = top_shape.copy()
+    top_preview.translate(App.Vector(0, 0, HALF_H))
+    add_shape(doc, "TopHalf", top_preview, (0.92, 0.72, 0.18))
+
+    top_print = top_shape.copy()
+    top_print.translate(App.Vector(COMMON_WIDTH + 12.0, 0, 0))
+    add_shape(doc, "TopHalf_Printable", top_print, (0.85, 0.78, 0.28))
+
+    bottom_print = bottom_shape.copy()
+    bottom_print.translate(App.Vector(-(COMMON_WIDTH + 12.0), 0, 0))
+    add_shape(doc, "BottomHalf_Printable", bottom_print, (0.88, 0.40, 0.18))
+
+    boom = Part.makeBox(
+        BOOM,
+        HOLDER_LEN*1.15,
+        BOOM,
+        App.Vector(-BOOM/2.0, -(HOLDER_LEN*1.15)/2.0, HALF_H - BOOM)
+    )
+    add_shape(doc, "BoomPreview", boom, (0.55,0.55,0.60))
+
+    add_preview_elements(doc, mode)
+    doc.recompute()
+    return doc
+
+
+build_doc("Yagi_Split_Driven_Holder_V2_2_CommonBottom", "split")
+build_doc("Yagi_Single_Element_Holder_V2_2_CommonBottom", "single")
+
+print("Created documents:")
+print(" - Yagi_Split_Driven_Holder_V2_2_CommonBottom")
+print(" - Yagi_Single_Element_Holder_V2_2_CommonBottom")
+print("")
+print("Changes:")
+print(" - same clamp bolt spacing for split and single")
+print(" - identical bottom parts for both versions")
+print(" - only top half differs (single vs split rod holes)")
+print(" - no coax channel")
+print(" - kept aligned open-clamp geometry")
