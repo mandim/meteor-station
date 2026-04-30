@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meteor-station"
+version = "0.1.0"
+description = "LAN-streamed RTL-SDR meteor detector tools for Raspberry Pi and PC"
+readme = "AGENTS.md"
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "sounddevice>=0.4.6",
+]
+
+[project.scripts]
+meteor-station-pi-stream = "meteor_station.cli.pi_stream:main"
+meteor-station-pc-detect = "meteor_station.cli.pc_detect:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

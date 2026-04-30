@@ -1,0 +1,8 @@
+[profiles.graves]
+carrier_hz = 143050000
+vfo_hz = 143048400
+center_freq_hz = 143048400
+usb_bandwidth_hz = 3000
+iq_sample_rate = 240000
+audio_sample_rate = 48000
+rtl_tcp_port = 1234
