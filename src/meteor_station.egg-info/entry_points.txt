@@ -1,0 +1,3 @@
+[console_scripts]
+meteor-station-pc-detect = meteor_station.cli.pc_detect:main
+meteor-station-pi-stream = meteor_station.cli.pi_stream:main

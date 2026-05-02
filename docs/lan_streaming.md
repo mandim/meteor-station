@@ -135,23 +135,26 @@ The PC runs the DSP and detector. It does not need SDR# or VB-CABLE for this pip
 
 ### Install Python environment
 
-From the repo root on the PC:
+#### Windows with Conda
 
-```bash
-python -m venv .venv
-```
-
-On Windows PowerShell:
+Create and activate a Conda environment for the PC receiver:
 
 ```powershell
-.venv\Scripts\Activate.ps1
+conda create -n meteor python=3.11 -y
+conda activate meteor
 python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-On Linux/macOS:
+The repo also includes [run_detector.ps1](/C:/Users/mandi/Desktop/meteor_station/run_detector.ps1:1) and [run_pc_receiver.ps1](/C:/Users/mandi/Desktop/meteor_station/run_pc_receiver.ps1:1), which prefer:
+
+- the currently activated Conda environment via `$env:CONDA_PREFIX`
+- or a `meteor` environment in standard Anaconda/Miniconda locations
+
+#### Linux/macOS or plain Python
 
 ```bash
+python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
@@ -184,12 +187,17 @@ Optional flags:
 
 - `--save-wav` to save WAV captures for `meteor_candidate` events
 - `--no-spectrogram` to disable PNG output
+- `--listen-audio` to hear the demodulated GRAVES audio on the PC speakers
+- `--show-waterfall` to open a live waterfall window on the PC
+- `--audio-output-device INDEX` to choose a specific output device for monitoring
+- `--waterfall-path PATH` to write the rolling waterfall PNG somewhere other than `meteor_logs/live_waterfall.png`
+- `--waterfall-window-seconds` and `--waterfall-update-seconds` to control the waterfall history depth and refresh rate
 - `--detection-min-hz` and `--detection-max-hz` if you want to experiment with the v3 audio band
 
-### Windows PowerShell example
+### Windows PowerShell example with Conda
 
 ```powershell
-.venv\Scripts\Activate.ps1
+conda activate meteor
 meteor-station-pc-detect `
   --config meteor_station.toml `
   --server-host 192.168.1.50 `
@@ -200,6 +208,40 @@ meteor-station-pc-detect `
   --iq-sample-rate 240000 `
   --audio-sample-rate 48000 `
   --output-dir meteor_logs
+```
+
+### Windows PowerShell example using the dedicated receiver wrapper
+
+This is the shortest normal Windows startup path:
+
+```powershell
+conda activate meteor
+.\run_pc_receiver.ps1 -Config meteor_station.toml -ServerHost 192.168.1.50
+```
+
+Equivalent full form:
+
+```powershell
+conda activate meteor
+.\run_pc_receiver.ps1 `
+  -Config meteor_station.toml `
+  -ServerHost 192.168.1.50 `
+  -ServerPort 1234 `
+  -CenterFreqHz 143048400 `
+  -VfoHz 143048400 `
+  -UsbBandwidthHz 3000 `
+  -IqSampleRate 240000 `
+  -AudioSampleRate 48000 `
+  -OutputDir meteor_logs `
+  -ListenAudio `
+  -ShowWaterfall `
+  -WaterfallPath meteor_logs\live_waterfall.png
+```
+
+If your Conda environment is not named `meteor`, either activate it first or set:
+
+```powershell
+$env:METEOR_PYTHON = "C:\full\path\to\python.exe"
 ```
 
 ## 3. End-to-end startup order
@@ -220,6 +262,7 @@ By default the PC writes detector outputs into `meteor_logs/` under the current 
 - `events_v3.csv`: structured event log
 - `event_v3_XXXXX.png`: spectrograms for `meteor_candidate` detections
 - `event_v3_XXXXX.wav`: optional WAV captures if `--save-wav` is enabled
+- `live_waterfall.png`: rolling waterfall of the demodulated audio with UTC time labels
 
 If you want outputs somewhere else, pass `--output-dir`.
 

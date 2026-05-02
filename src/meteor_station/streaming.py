@@ -62,7 +62,12 @@ class RtlTcpClient:
             self.connect()
         assert self.sock is not None
         while True:
-            payload = self.sock.recv(self.chunk_size)
+            try:
+                payload = self.sock.recv(self.chunk_size)
+            except TimeoutError:
+                continue
+            except socket.timeout:
+                continue
             if not payload:
                 break
             yield payload

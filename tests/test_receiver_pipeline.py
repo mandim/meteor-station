@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from meteor_station.detector import DetectorConfig, MeteorDetector
 from meteor_station.dsp import chunk_complex_samples
+from meteor_station.monitoring import LiveWaterfallWindow, RollingWaterfall, WaterfallConfig
 from meteor_station.receiver import NetworkMeteorReceiver, ReceiverConfig
 
 
@@ -71,10 +72,125 @@ class ReceiverPipelineTests(unittest.TestCase):
             self.assertEqual(events[0].event_type, "meteor_candidate")
 
             csv_path = tmp_dir / "events_v3.csv"
-            rows = list(csv.reader(open(csv_path, encoding="utf-8")))
+            with csv_path.open(encoding="utf-8") as handle:
+                rows = list(csv.reader(handle))
             self.assertEqual(len(rows), 2)
             png_path = Path(rows[1][13])
             self.assertTrue(png_path.exists(), "expected spectrogram PNG to be created")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def test_receiver_can_write_rolling_waterfall_png(self):
+        iq_sample_rate = 240_000
+        audio_sample_rate = 48_000
+        duration_s = 1.4
+        total_samples = int(iq_sample_rate * duration_s)
+        t = np.arange(total_samples, dtype=np.float32) / iq_sample_rate
+        iq = (0.2 * np.exp(1j * 2.0 * np.pi * 1_600.0 * t)).astype(np.complex64)
+
+        tmp_dir = Path.cwd() / "test_output_receiver_waterfall"
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            detector = MeteorDetector(
+                DetectorConfig(
+                    sample_rate=audio_sample_rate,
+                    block_size=4_096,
+                    output_dir=str(tmp_dir),
+                    save_spectrogram=False,
+                ),
+                print_fn=lambda _: None,
+            )
+            waterfall = RollingWaterfall(
+                WaterfallConfig(
+                    output_path=str(tmp_dir / "live_waterfall.png"),
+                    sample_rate=audio_sample_rate,
+                    window_seconds=5.0,
+                    update_interval_s=0.5,
+                    min_hz=0.0,
+                    max_hz=4_000.0,
+                )
+            )
+            receiver = NetworkMeteorReceiver(
+                ReceiverConfig(
+                    server_host="127.0.0.1",
+                    server_port=1234,
+                    iq_sample_rate=iq_sample_rate,
+                    audio_sample_rate=audio_sample_rate,
+                    center_freq_hz=143_048_400,
+                    vfo_hz=143_048_400,
+                    usb_bandwidth_hz=3_000,
+                ),
+                detector,
+                audio_sinks=[waterfall],
+            )
+
+            timestamp = 1_700_000_000.0
+            for chunk in chunk_complex_samples(iq, 24_000):
+                receiver.process_iq_samples(chunk, start_timestamp=timestamp)
+                timestamp += chunk.size / iq_sample_rate
+            receiver.flush(timestamp)
+
+            self.assertTrue((tmp_dir / "live_waterfall.png").exists())
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def test_live_waterfall_window_renders_without_displaying_ui(self):
+        import matplotlib
+
+        matplotlib.use("Agg")
+
+        iq_sample_rate = 240_000
+        audio_sample_rate = 48_000
+        duration_s = 1.0
+        total_samples = int(iq_sample_rate * duration_s)
+        t = np.arange(total_samples, dtype=np.float32) / iq_sample_rate
+        iq = (0.2 * np.exp(1j * 2.0 * np.pi * 1_600.0 * t)).astype(np.complex64)
+
+        tmp_dir = Path.cwd() / "test_output_receiver_window"
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            detector = MeteorDetector(
+                DetectorConfig(
+                    sample_rate=audio_sample_rate,
+                    block_size=4_096,
+                    output_dir=str(tmp_dir),
+                    save_spectrogram=False,
+                ),
+                print_fn=lambda _: None,
+            )
+            window = LiveWaterfallWindow(
+                WaterfallConfig(
+                    output_path=str(tmp_dir / "unused.png"),
+                    sample_rate=audio_sample_rate,
+                    window_seconds=5.0,
+                    update_interval_s=0.25,
+                    min_hz=0.0,
+                    max_hz=4_000.0,
+                )
+            )
+            receiver = NetworkMeteorReceiver(
+                ReceiverConfig(
+                    server_host="127.0.0.1",
+                    server_port=1234,
+                    iq_sample_rate=iq_sample_rate,
+                    audio_sample_rate=audio_sample_rate,
+                    center_freq_hz=143_048_400,
+                    vfo_hz=143_048_400,
+                    usb_bandwidth_hz=3_000,
+                ),
+                detector,
+                audio_sinks=[window],
+            )
+
+            timestamp = 1_700_000_000.0
+            for chunk in chunk_complex_samples(iq, 24_000):
+                receiver.process_iq_samples(chunk, start_timestamp=timestamp)
+                timestamp += chunk.size / iq_sample_rate
+            receiver.flush(timestamp)
+
+            self.assertIsNotNone(window.image)
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
