@@ -374,22 +374,21 @@ def save_spectrogram(
     min_hz: float,
     max_hz: float,
 ) -> None:
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
 
     x = np.concatenate(frames)
-    plt.figure(figsize=(10, 4))
+    fig = Figure(figsize=(10, 4))
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
     with np.errstate(divide="ignore"):
-        plt.specgram(x, NFFT=1024, Fs=sample_rate, noverlap=768)
-    plt.xlabel("Time (s)")
-    plt.ylabel("Frequency (Hz)")
-    plt.title("Meteor Event Spectrogram")
-    plt.ylim(min_hz, max_hz)
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=120)
-    plt.close()
+        ax.specgram(x, NFFT=1024, Fs=sample_rate, noverlap=768)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Frequency (Hz)")
+    ax.set_title("Meteor Event Spectrogram")
+    ax.set_ylim(min_hz, max_hz)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120)
 
 
 def save_wav(frames: list[np.ndarray], sample_rate: int, out_path: Path) -> None:

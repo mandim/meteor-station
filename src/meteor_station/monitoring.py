@@ -10,6 +10,27 @@ import numpy as np
 from scipy.signal import spectrogram
 
 
+def is_interactive_matplotlib_backend(backend: str) -> bool:
+    normalized = backend.strip().lower()
+    if not normalized:
+        return False
+    if normalized == "agg":
+        return False
+    if normalized.startswith("module://matplotlib_inline"):
+        return False
+    return any(
+        token in normalized
+        for token in (
+            "tkagg",
+            "qtagg",
+            "qt5agg",
+            "wxagg",
+            "gtk",
+            "macosx",
+        )
+    )
+
+
 @dataclass(slots=True)
 class WaterfallConfig:
     output_path: str
@@ -151,7 +172,7 @@ class LiveWaterfallWindow(_BaseWaterfall):
         plt.ion()
         self.plt = plt
         self.fig, self.ax = plt.subplots(figsize=(12, 5))
-        self._is_interactive_backend = "agg" not in plt.get_backend().lower()
+        self._is_interactive_backend = is_interactive_matplotlib_backend(plt.get_backend())
         self.image = None
         self.ax.set_ylabel("Frequency (Hz)")
         self.ax.set_xlabel("UTC time")

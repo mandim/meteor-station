@@ -2,6 +2,7 @@ import csv
 import shutil
 import sys
 import unittest
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -10,11 +11,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from meteor_station.detector import DetectorConfig, MeteorDetector
 from meteor_station.dsp import chunk_complex_samples
-from meteor_station.monitoring import LiveWaterfallWindow, RollingWaterfall, WaterfallConfig
+from meteor_station.monitoring import (
+    LiveWaterfallWindow,
+    RollingWaterfall,
+    WaterfallConfig,
+    is_interactive_matplotlib_backend,
+)
 from meteor_station.receiver import NetworkMeteorReceiver, ReceiverConfig
 
 
 class ReceiverPipelineTests(unittest.TestCase):
+    def test_interactive_backend_detection(self):
+        self.assertTrue(is_interactive_matplotlib_backend("TkAgg"))
+        self.assertTrue(is_interactive_matplotlib_backend("QtAgg"))
+        self.assertTrue(is_interactive_matplotlib_backend("Qt5Agg"))
+        self.assertFalse(is_interactive_matplotlib_backend("Agg"))
+        self.assertFalse(is_interactive_matplotlib_backend("module://matplotlib_inline.backend_inline"))
+
     def test_end_to_end_iq_pipeline_writes_event_outputs(self):
         iq_sample_rate = 240_000
         audio_sample_rate = 48_000
@@ -150,6 +163,7 @@ class ReceiverPipelineTests(unittest.TestCase):
         tmp_dir = Path.cwd() / "test_output_receiver_window"
         shutil.rmtree(tmp_dir, ignore_errors=True)
         tmp_dir.mkdir(parents=True, exist_ok=True)
+        window = None
         try:
             detector = MeteorDetector(
                 DetectorConfig(
@@ -191,7 +205,39 @@ class ReceiverPipelineTests(unittest.TestCase):
             receiver.flush(timestamp)
 
             self.assertIsNotNone(window.image)
+            self.assertFalse(window._is_interactive_backend)
         finally:
+            if window is not None:
+                window.close()
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def test_live_waterfall_window_treats_tkagg_as_interactive(self):
+        import matplotlib
+        import matplotlib.pyplot as plt
+
+        matplotlib.use("Agg")
+
+        tmp_dir = Path.cwd() / "test_output_receiver_window_backend"
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        window = None
+        try:
+            from unittest import mock
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                with mock.patch.object(plt, "get_backend", return_value="TkAgg"):
+                    window = LiveWaterfallWindow(
+                        WaterfallConfig(
+                            output_path=str(tmp_dir / "unused.png"),
+                            sample_rate=48_000,
+                        )
+                    )
+
+            self.assertTrue(window._is_interactive_backend)
+        finally:
+            if window is not None:
+                window.close()
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
 

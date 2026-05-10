@@ -48,7 +48,8 @@ class DetectorTests(unittest.TestCase):
                 timestamp += block.size / self.sample_rate
                 events.extend(detector.process_block(block, timestamp=timestamp))
             events.extend(detector.finalize_pending(timestamp=timestamp + 0.2))
-            csv_rows = list(csv.reader(open(tmp_dir / "events_v3.csv", encoding="utf-8")))
+            with (tmp_dir / "events_v3.csv").open(encoding="utf-8") as handle:
+                csv_rows = list(csv.reader(handle))
             return events, csv_rows
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
