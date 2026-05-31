@@ -5,7 +5,12 @@ import threading
 import time
 from pathlib import Path
 
-from meteor_station.config import DEFAULT_AUDIO_SAMPLE_RATE, load_graves_profile
+from meteor_station.config import (
+    DEFAULT_AUDIO_SAMPLE_RATE,
+    DEFAULT_DETECTION_PROFILE,
+    load_graves_detector_profile,
+    load_graves_profile,
+)
 from meteor_station.detector import DetectorConfig, MeteorDetector
 from meteor_station.monitoring import LiveAudioMonitor, LiveWaterfallWindow, RollingWaterfall, WaterfallConfig
 from meteor_station.receiver import NetworkMeteorReceiver, ReceiverConfig
@@ -14,6 +19,11 @@ from meteor_station.receiver import NetworkMeteorReceiver, ReceiverConfig
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Receive rtl_tcp IQ, demodulate USB audio, and run the meteor detector.")
     parser.add_argument("--config", help="Optional TOML config file.")
+    parser.add_argument(
+        "--detector-profile",
+        default=DEFAULT_DETECTION_PROFILE,
+        help="Named detector profile from [detector_profiles.*] in the TOML config.",
+    )
     parser.add_argument("--server-host", default="127.0.0.1", help="rtl_tcp server host.")
     parser.add_argument("--server-port", type=int, help="rtl_tcp server port.")
     parser.add_argument("--carrier-hz", type=int, help="GRAVES carrier frequency in Hz.")
@@ -24,10 +34,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audio-sample-rate", type=int, default=DEFAULT_AUDIO_SAMPLE_RATE, help="Detector audio sample rate.")
     parser.add_argument("--output-dir", default="meteor_logs", help="Directory for CSV and spectrogram output.")
     parser.add_argument("--block-size", type=int, default=4096, help="Detector block size in audio samples.")
-    parser.add_argument("--save-wav", action="store_true", help="Save WAV files for meteor_candidate events.")
+    parser.add_argument("--save-wav", action="store_true", help="Force-enable WAV files for meteor_candidate events.")
+    parser.add_argument("--no-wav", action="store_true", help="Disable WAV files for meteor_candidate events.")
     parser.add_argument("--no-spectrogram", action="store_true", help="Disable saved spectrograms.")
-    parser.add_argument("--detection-min-hz", type=float, default=1300.0, help="Detector lower frequency bound in Hz.")
-    parser.add_argument("--detection-max-hz", type=float, default=1700.0, help="Detector upper frequency bound in Hz.")
+    parser.add_argument(
+        "--no-detection-waterfall",
+        action="store_true",
+        help="Disable saving a rolling waterfall snapshot when a meteor candidate is finalized.",
+    )
+    parser.add_argument(
+        "--detection-waterfall-dir",
+        default="waterfalls",
+        help="Directory under --output-dir for detection-triggered waterfall snapshots.",
+    )
+    parser.add_argument(
+        "--detection-waterfall-prefix",
+        default="event_v3_",
+        help="Filename prefix for detection-triggered waterfall snapshots.",
+    )
+    parser.add_argument("--detection-min-hz", type=float, help="Detector lower frequency bound in Hz.")
+    parser.add_argument("--detection-max-hz", type=float, help="Detector upper frequency bound in Hz.")
     parser.add_argument("--iq-chunk-bytes", type=int, default=16384, help="Socket read size in bytes.")
     parser.add_argument("--listen-audio", action="store_true", help="Play the demodulated mono audio on the PC.")
     parser.add_argument("--audio-output-device", type=int, help="Optional sounddevice output device index.")
@@ -46,31 +72,52 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     profile = load_graves_profile(args.config)
-    detector = MeteorDetector(
-        DetectorConfig(
-            sample_rate=args.audio_sample_rate,
-            block_size=args.block_size,
-            detection_min_hz=args.detection_min_hz,
-            detection_max_hz=args.detection_max_hz,
-            output_dir=args.output_dir,
-            save_spectrogram=not args.no_spectrogram,
-            save_wav=args.save_wav,
-        )
-    )
+    detector_profile = load_graves_detector_profile(args.config, profile_name=args.detector_profile)
     waterfall_path = Path(args.waterfall_path) if args.waterfall_path else Path(args.output_dir) / "live_waterfall.png"
     live_waterfall_window: LiveWaterfallWindow | None = None
-    audio_sinks = [
-        RollingWaterfall(
-            WaterfallConfig(
-                output_path=str(waterfall_path),
-                sample_rate=args.audio_sample_rate,
-                window_seconds=args.waterfall_window_seconds,
-                update_interval_s=args.waterfall_update_seconds,
-                min_hz=args.waterfall_min_hz,
-                max_hz=args.waterfall_max_hz,
-            )
+    rolling_waterfall = RollingWaterfall(
+        WaterfallConfig(
+            output_path=str(waterfall_path),
+            sample_rate=args.audio_sample_rate,
+            window_seconds=args.waterfall_window_seconds,
+            update_interval_s=args.waterfall_update_seconds,
+            min_hz=args.waterfall_min_hz,
+            max_hz=args.waterfall_max_hz,
         )
-    ]
+    )
+    detector_config = DetectorConfig.from_graves_profile(
+        detector_profile,
+        sample_rate=args.audio_sample_rate,
+        block_size=args.block_size,
+        output_dir=args.output_dir,
+        detection_waterfall_dir=args.detection_waterfall_dir,
+        detection_waterfall_prefix=args.detection_waterfall_prefix,
+    )
+    if args.detection_min_hz is not None:
+        detector_config.detection_min_hz = args.detection_min_hz
+    if args.detection_max_hz is not None:
+        detector_config.detection_max_hz = args.detection_max_hz
+    if args.no_spectrogram:
+        detector_config.save_spectrogram = False
+    if args.save_wav:
+        detector_config.save_wav = True
+    if args.no_wav:
+        detector_config.save_wav = False
+    if args.no_detection_waterfall:
+        detector_config.save_detection_waterfall = False
+    detector = MeteorDetector(
+        detector_config,
+        detection_waterfall_saver=lambda path, config: rolling_waterfall.save_snapshot(
+            path,
+            window_seconds=config.event_waterfall_window_seconds,
+            min_hz=config.event_waterfall_min_hz,
+            max_hz=config.event_waterfall_max_hz,
+            percentile_min=config.event_waterfall_percentile_min,
+            percentile_max=config.event_waterfall_percentile_max,
+            suppress_below_hz=config.review_suppress_below_hz,
+        ),
+    )
+    audio_sinks = [rolling_waterfall]
     if args.listen_audio:
         audio_sinks.append(
             LiveAudioMonitor(
@@ -113,7 +160,11 @@ def main() -> int:
     print(f"  iq_sample_rate={receiver.config.iq_sample_rate}")
     print(f"  audio_sample_rate={receiver.config.audio_sample_rate}")
     print(f"  output_dir={detector.config.output_dir}")
+    print(f"  detector_profile={args.detector_profile}")
+    print(f"  detection_band_hz={detector.config.detection_min_hz}-{detector.config.detection_max_hz}")
+    print(f"  save_wav={detector.config.save_wav}")
     print(f"  waterfall_path={waterfall_path}")
+    print(f"  detection_waterfall={detector.config.save_detection_waterfall}")
     if args.show_waterfall:
         print("  show_waterfall=True")
     if args.listen_audio:

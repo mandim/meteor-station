@@ -6,3 +6,76 @@ usb_bandwidth_hz = 3000
 iq_sample_rate = 240000
 audio_sample_rate = 48000
 rtl_tcp_port = 1234
+
+[detector_profiles.graves]
+detection_min_hz = 1200
+detection_max_hz = 1600
+trigger_db_above_baseline = 11.0
+band_rise_db_min = 3.0
+baseline_alpha = 0.003
+end_hangover_s = 0.20
+min_event_duration_s = 0.05
+max_event_duration_s = 5.0
+min_gap_between_events_s = 0.50
+peak_to_median_db_min = 6.5
+near_peak_power_ratio = 0.25
+max_near_peak_bins = 5
+save_spectrogram = true
+save_wav = true
+save_detection_waterfall = true
+specgram_min_hz = 1200
+specgram_max_hz = 1600
+specgram_percentile_min = 20.0
+specgram_percentile_max = 99.8
+event_waterfall_window_seconds = 3.0
+event_waterfall_min_hz = 1200
+event_waterfall_max_hz = 1600
+event_waterfall_percentile_min = 20.0
+event_waterfall_percentile_max = 99.8
+review_suppress_below_hz = 1000.0
+
+[detector_profiles.graves_sdrsharp]
+detection_min_hz = 1200
+detection_max_hz = 1600
+trigger_db_above_baseline = 11.0
+band_rise_db_min = 3.0
+baseline_alpha = 0.003
+end_hangover_s = 0.20
+min_event_duration_s = 0.05
+max_event_duration_s = 5.0
+min_gap_between_events_s = 0.50
+peak_to_median_db_min = 6.5
+near_peak_power_ratio = 0.25
+max_near_peak_bins = 5
+save_spectrogram = true
+save_wav = true
+save_detection_waterfall = true
+specgram_min_hz = 1200
+specgram_max_hz = 1600
+specgram_percentile_min = 20.0
+specgram_percentile_max = 99.8
+event_waterfall_window_seconds = 3.0
+event_waterfall_min_hz = 1200
+event_waterfall_max_hz = 1600
+event_waterfall_percentile_min = 20.0
+event_waterfall_percentile_max = 99.8
+review_suppress_below_hz = 1000.0
+
+[audio_inputs.sdrsharp_vb_cable]
+# Prefer an explicit index once you know it from --list-audio-devices.
+device_index = 20
+# Used only when device_index is omitted.
+device_name_contains = "CABLE Output"
+sample_rate = 48000
+channels = 1
+block_size = 4096
+dtype = "float32"
+queue_max_blocks = 128
+
+[runtime.local_sdrsharp]
+output_dir = "meteor_logs"
+log_level = "INFO"
+save_spectrogram = true
+save_wav = true
+save_detection_waterfall = true
+waterfall_path = "live_waterfall.png"

@@ -1,5 +1,6 @@
 param(
     [string]$Config = "meteor_station.toml",
+    [string]$DetectorProfile = "graves",
     [string]$ServerHost = "192.168.1.50",
     [int]$ServerPort = 1234,
     [int]$CenterFreqHz = 143048400,
@@ -9,7 +10,9 @@ param(
     [int]$AudioSampleRate = 48000,
     [string]$OutputDir = "meteor_logs",
     [switch]$SaveWav,
+    [switch]$NoWav,
     [switch]$NoSpectrogram,
+    [switch]$NoDetectionWaterfall,
     [switch]$ListenAudio,
     [switch]$ShowWaterfall,
     [Nullable[int]]$AudioOutputDevice = $null,
@@ -72,6 +75,7 @@ if (-not (Test-Path -LiteralPath $scriptPath)) {
 
 $scriptArgs = @(
     "--config", $Config,
+    "--detector-profile", $DetectorProfile,
     "--server-host", $ServerHost,
     "--server-port", $ServerPort,
     "--center-freq-hz", $CenterFreqHz,
@@ -86,8 +90,16 @@ if ($SaveWav) {
     $scriptArgs += "--save-wav"
 }
 
+if ($NoWav) {
+    $scriptArgs += "--no-wav"
+}
+
 if ($NoSpectrogram) {
     $scriptArgs += "--no-spectrogram"
+}
+
+if ($NoDetectionWaterfall) {
+    $scriptArgs += "--no-detection-waterfall"
 }
 
 $scriptArgs += @(
@@ -116,5 +128,6 @@ if ($WaterfallPath) {
 Write-Host "Using Python: $python"
 Write-Host "Running script: $scriptPath"
 Write-Host "Server: $ServerHost`:$ServerPort"
+Write-Host "Detector profile: $DetectorProfile"
 
 & $python $scriptPath @scriptArgs

@@ -9,6 +9,9 @@ from pathlib import Path
 import numpy as np
 from scipy.signal import spectrogram
 
+from .artifacts import normalize_output_path, save_figure_png
+from .detector import _percentile_limits
+
 
 def is_interactive_matplotlib_backend(backend: str) -> bool:
     normalized = backend.strip().lower()
@@ -41,6 +44,9 @@ class WaterfallConfig:
     max_hz: float = 4_000.0
     nfft: int = 1024
     noverlap: int = 768
+    percentile_min: float = 5.0
+    percentile_max: float = 99.5
+    suppress_below_hz: float = 0.0
 
 
 class _BaseWaterfall:
@@ -89,13 +95,23 @@ class _BaseWaterfall:
             return True
         return (self.latest_ts - self._last_rendered_ts) >= self.config.update_interval_s
 
-    def _compute_waterfall(self) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    def _compute_waterfall(
+        self,
+        *,
+        window_seconds: float | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float] | None:
         with self._lock:
             if self.buffer_start_ts is None or self.latest_ts is None or self.audio_buffer.size < self.config.nfft:
                 return None
             buffer_start_ts = self.buffer_start_ts
             audio_buffer = self.audio_buffer.copy()
             latest_ts = self.latest_ts
+        if window_seconds is not None:
+            target_samples = max(int(window_seconds * self.config.sample_rate), self.config.nfft)
+            if audio_buffer.size > target_samples:
+                trim = audio_buffer.size - target_samples
+                audio_buffer = audio_buffer[trim:]
+                buffer_start_ts += trim / self.config.sample_rate
         freqs, bins, power = spectrogram(
             audio_buffer,
             fs=self.config.sample_rate,
@@ -133,35 +149,94 @@ class _BaseWaterfall:
 class RollingWaterfall(_BaseWaterfall):
     def __init__(self, config: WaterfallConfig) -> None:
         super().__init__(config)
-        self.output_path = Path(config.output_path)
-        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.output_path = normalize_output_path(config.output_path)
 
     def render(self) -> None:
         rendered = self._compute_waterfall()
         if rendered is None:
             return
-        freqs, bins, power_db, buffer_start_ts, latest_ts = rendered
+        _, _, _, _, latest_ts = rendered
+        self._render_to_path(rendered, self.output_path)
+        self._last_rendered_ts = latest_ts
+
+    def save_snapshot(
+        self,
+        out_path: str | Path,
+        *,
+        window_seconds: float | None = None,
+        min_hz: float | None = None,
+        max_hz: float | None = None,
+        percentile_min: float | None = None,
+        percentile_max: float | None = None,
+        suppress_below_hz: float | None = None,
+    ) -> str | None:
+        rendered = self._compute_waterfall(window_seconds=window_seconds)
+        if rendered is None:
+            return None
+        destination = normalize_output_path(out_path)
+        self._render_to_path(
+            rendered,
+            destination,
+            min_hz=min_hz,
+            max_hz=max_hz,
+            percentile_min=percentile_min,
+            percentile_max=percentile_max,
+            suppress_below_hz=suppress_below_hz,
+            title="GRAVES Candidate Review Waterfall",
+        )
+        return str(destination)
+
+    def _render_to_path(
+        self,
+        rendered: tuple[np.ndarray, np.ndarray, np.ndarray, float, float],
+        out_path: Path,
+        *,
+        min_hz: float | None = None,
+        max_hz: float | None = None,
+        percentile_min: float | None = None,
+        percentile_max: float | None = None,
+        suppress_below_hz: float | None = None,
+        title: str = "Live GRAVES Audio Waterfall",
+    ) -> None:
+        freqs, bins, power_db, buffer_start_ts, _latest_ts = rendered
 
         from matplotlib.backends.backend_agg import FigureCanvasAgg
         from matplotlib.figure import Figure
+
+        display_min_hz = self.config.min_hz if min_hz is None else min_hz
+        display_max_hz = self.config.max_hz if max_hz is None else max_hz
+        display_percentile_min = self.config.percentile_min if percentile_min is None else percentile_min
+        display_percentile_max = self.config.percentile_max if percentile_max is None else percentile_max
+        suppress_limit_hz = self.config.suppress_below_hz if suppress_below_hz is None else suppress_below_hz
+        review_power_db = power_db.copy()
+        if suppress_limit_hz > 0:
+            review_power_db[freqs < suppress_limit_hz, :] = np.nan
+        vmin, vmax = _percentile_limits(review_power_db, display_percentile_min, display_percentile_max)
 
         fig = Figure(figsize=(12, 5))
         FigureCanvasAgg(fig)
         ax = fig.add_subplot(111)
         extent = [float(bins[0]), float(bins[-1]), float(freqs[0]), float(freqs[-1])]
-        ax.imshow(power_db, origin="lower", aspect="auto", extent=extent, cmap="viridis")
+        ax.imshow(
+            review_power_db,
+            origin="lower",
+            aspect="auto",
+            extent=extent,
+            cmap="viridis",
+            vmin=vmin,
+            vmax=vmax,
+        )
         ax.set_ylabel("Frequency (Hz)")
         ax.set_xlabel("UTC time")
-        ax.set_title("Live GRAVES Audio Waterfall")
-        ax.set_ylim(self.config.min_hz, self.config.max_hz)
+        ax.set_title(title)
+        ax.set_ylim(display_min_hz, display_max_hz)
 
         tick_positions, tick_labels = self._tick_positions_and_labels(bins, buffer_start_ts)
         if tick_labels:
             ax.set_xticks(tick_positions, tick_labels)
 
         fig.tight_layout()
-        fig.savefig(self.output_path, dpi=120)
-        self._last_rendered_ts = latest_ts
+        save_figure_png(fig, out_path, dpi=120)
 
 
 class LiveWaterfallWindow(_BaseWaterfall):
@@ -220,10 +295,14 @@ class LiveWaterfallWindow(_BaseWaterfall):
                 aspect="auto",
                 extent=extent,
                 cmap="viridis",
+                vmin=_percentile_limits(power_db, self.config.percentile_min, self.config.percentile_max)[0],
+                vmax=_percentile_limits(power_db, self.config.percentile_min, self.config.percentile_max)[1],
             )
         else:
             self.image.set_data(power_db)
             self.image.set_extent(extent)
+            vmin, vmax = _percentile_limits(power_db, self.config.percentile_min, self.config.percentile_max)
+            self.image.set_clim(vmin=vmin, vmax=vmax)
 
         self.ax.set_ylim(self.config.min_hz, self.config.max_hz)
         tick_positions, tick_labels = self._tick_positions_and_labels(bins, buffer_start_ts)

@@ -16,6 +16,8 @@ DEFAULT_GRAVES_USB_BANDWIDTH_HZ = 3_000
 DEFAULT_IQ_SAMPLE_RATE = 240_000
 DEFAULT_AUDIO_SAMPLE_RATE = 48_000
 DEFAULT_RTL_TCP_PORT = 1234
+DEFAULT_DETECTION_PROFILE = "graves"
+DEFAULT_SDRSHARP_DETECTION_PROFILE = "graves_sdrsharp"
 
 
 @dataclass(slots=True)
@@ -29,6 +31,56 @@ class GravesProfile:
     center_freq_hz: int = DEFAULT_GRAVES_VFO_HZ
 
 
+@dataclass(slots=True)
+class GravesDetectorProfile:
+    detection_min_hz: float = 1_200.0
+    detection_max_hz: float = 1_600.0
+    trigger_db_above_baseline: float = 11.0
+    band_rise_db_min: float = 3.0
+    baseline_alpha: float = 0.003
+    end_hangover_s: float = 0.20
+    min_event_duration_s: float = 0.05
+    max_event_duration_s: float = 5.0
+    min_gap_between_events_s: float = 0.50
+    peak_to_median_db_min: float = 6.5
+    near_peak_power_ratio: float = 0.25
+    max_near_peak_bins: int = 5
+    save_spectrogram: bool = True
+    save_wav: bool = True
+    save_detection_waterfall: bool = True
+    specgram_min_hz: float = 1_200.0
+    specgram_max_hz: float = 1_600.0
+    specgram_percentile_min: float = 20.0
+    specgram_percentile_max: float = 99.8
+    event_waterfall_window_seconds: float = 3.0
+    event_waterfall_min_hz: float = 1_200.0
+    event_waterfall_max_hz: float = 1_600.0
+    event_waterfall_percentile_min: float = 20.0
+    event_waterfall_percentile_max: float = 99.8
+    review_suppress_below_hz: float = 1_000.0
+
+
+@dataclass(slots=True)
+class AudioInputConfig:
+    device_index: int | None = None
+    device_name_contains: str | None = "CABLE Output"
+    sample_rate: int = DEFAULT_AUDIO_SAMPLE_RATE
+    channels: int = 1
+    block_size: int = 4_096
+    dtype: str = "float32"
+    queue_max_blocks: int = 128
+
+
+@dataclass(slots=True)
+class LocalSdrsharpRuntimeConfig:
+    output_dir: str = "meteor_logs"
+    log_level: str = "INFO"
+    save_spectrogram: bool = True
+    save_wav: bool = True
+    save_detection_waterfall: bool = True
+    waterfall_path: str = "live_waterfall.png"
+
+
 def load_toml_config(path: str | Path | None) -> dict[str, Any]:
     if path is None:
         return {}
@@ -40,6 +92,39 @@ def load_graves_profile(path: str | Path | None = None) -> GravesProfile:
     data = load_toml_config(path)
     profile = GravesProfile()
     profile_data = data.get("profiles", {}).get("graves", {})
+    return merge_dataclass(profile, profile_data)
+
+
+def load_graves_detector_profile(
+    path: str | Path | None = None,
+    *,
+    profile_name: str = DEFAULT_DETECTION_PROFILE,
+) -> GravesDetectorProfile:
+    data = load_toml_config(path)
+    profile = GravesDetectorProfile()
+    profile_data = data.get("detector_profiles", {}).get(profile_name, {})
+    return merge_dataclass(profile, profile_data)
+
+
+def load_audio_input_config(
+    path: str | Path | None = None,
+    *,
+    input_name: str = "sdrsharp_vb_cable",
+) -> AudioInputConfig:
+    data = load_toml_config(path)
+    profile = AudioInputConfig()
+    profile_data = data.get("audio_inputs", {}).get(input_name, {})
+    return merge_dataclass(profile, profile_data)
+
+
+def load_local_sdrsharp_runtime_config(
+    path: str | Path | None = None,
+    *,
+    runtime_name: str = "local_sdrsharp",
+) -> LocalSdrsharpRuntimeConfig:
+    data = load_toml_config(path)
+    profile = LocalSdrsharpRuntimeConfig()
+    profile_data = data.get("runtime", {}).get(runtime_name, {})
     return merge_dataclass(profile, profile_data)
 
 

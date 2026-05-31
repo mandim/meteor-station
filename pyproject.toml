@@ -18,9 +18,13 @@ dependencies = [
 [project.scripts]
 meteor-station-pi-stream = "meteor_station.cli.pi_stream:main"
 meteor-station-pc-detect = "meteor_station.cli.pc_detect:main"
+meteor-station-sdrsharp-detect = "meteor_station.cli.sdrsharp_detect:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+python_files = ["tests/test_*.py"]

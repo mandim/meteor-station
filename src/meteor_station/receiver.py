@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -57,10 +58,10 @@ class NetworkMeteorReceiver:
         self,
         iq_samples: np.ndarray,
         *,
-        start_timestamp: float = 0.0,
+        start_timestamp: float | None = None,
     ) -> list[MeteorEvent]:
         events: list[MeteorEvent] = []
-        timestamp = start_timestamp
+        timestamp = time.time() if start_timestamp is None else start_timestamp
         for block in self.demodulator.process_iq(iq_samples):
             block_start = timestamp
             timestamp += block.size / self.config.audio_sample_rate
@@ -68,7 +69,12 @@ class NetworkMeteorReceiver:
             events.extend(self.detector.process_block(block, timestamp=timestamp))
         return events
 
-    def process_rtl_payload(self, payload: bytes, *, start_timestamp: float = 0.0) -> list[MeteorEvent]:
+    def process_rtl_payload(
+        self,
+        payload: bytes,
+        *,
+        start_timestamp: float | None = None,
+    ) -> list[MeteorEvent]:
         return self.process_iq_samples(rtl_tcp_bytes_to_iq(payload), start_timestamp=start_timestamp)
 
     def flush(self, timestamp: float) -> list[MeteorEvent]:
@@ -89,7 +95,7 @@ class NetworkMeteorReceiver:
             chunk_size=self.config.iq_chunk_bytes,
             timeout_s=0.5,
         )
-        stream_time = 0.0
+        stream_time = time.time()
         try:
             client.connect()
             for payload in client.iter_chunks():

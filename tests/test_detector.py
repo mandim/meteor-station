@@ -7,19 +7,15 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 
 from meteor_station.detector import DetectorConfig, MeteorDetector
+from fixtures import broadband_false_positive_fixture, meteor_candidate_fixture
 
 
 def iter_blocks(signal: np.ndarray, block_size: int) -> list[np.ndarray]:
     padded = np.pad(signal.astype(np.float32), (0, (-signal.size) % block_size))
     return [padded[i : i + block_size] for i in range(0, padded.size, block_size)]
-
-
-def tone(sample_rate: int, duration_s: float, freq_hz: float, amplitude: float) -> np.ndarray:
-    t = np.arange(int(sample_rate * duration_s), dtype=np.float32) / sample_rate
-    return amplitude * np.sin(2.0 * np.pi * freq_hz * t).astype(np.float32)
-
 
 class DetectorTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -55,8 +51,7 @@ class DetectorTests(unittest.TestCase):
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_short_tone_becomes_meteor_candidate(self):
-        noise = 0.002 * np.random.default_rng(1).standard_normal(self.sample_rate).astype(np.float32)
-        signal = np.concatenate([noise, tone(self.sample_rate, 0.35, 1500.0, 0.25)])
+        signal = meteor_candidate_fixture(self.sample_rate)
         events, rows = self._run_detector(signal)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].event_type, "meteor_candidate")
@@ -64,20 +59,32 @@ class DetectorTests(unittest.TestCase):
 
     def test_long_steady_tone_is_rejected(self):
         noise = 0.001 * np.random.default_rng(2).standard_normal(self.sample_rate).astype(np.float32)
-        signal = np.concatenate([noise, tone(self.sample_rate, 1.8, 1500.0, 0.22)])
+        signal = np.concatenate(
+            [
+                noise,
+                0.22 * np.sin(
+                    2.0 * np.pi * 1500.0 * np.arange(int(self.sample_rate * 1.8), dtype=np.float32) / self.sample_rate
+                ).astype(np.float32),
+            ]
+        )
         events, _ = self._run_detector(signal)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].event_type, "steady_tone_rejected")
 
     def test_broadband_event_is_rejected(self):
-        rng = np.random.default_rng(3)
-        noise = 0.001 * rng.standard_normal(self.sample_rate).astype(np.float32)
-        trigger = tone(self.sample_rate, 0.1, 1500.0, 0.22)
-        broadband = 0.25 * rng.standard_normal(int(self.sample_rate * 0.25)).astype(np.float32)
-        signal = np.concatenate([noise, trigger, broadband, noise[: self.sample_rate // 2]])
+        signal = broadband_false_positive_fixture(self.sample_rate)
         events, _ = self._run_detector(signal)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].event_type, "broadband_rejected")
+
+    def test_default_detector_config_matches_graves_profile_expectations(self):
+        config = DetectorConfig()
+        self.assertEqual(config.detection_min_hz, 1200.0)
+        self.assertEqual(config.detection_max_hz, 1600.0)
+        self.assertEqual(config.trigger_db_above_baseline, 11.0)
+        self.assertEqual(config.peak_to_median_db_min, 6.5)
+        self.assertEqual(config.max_near_peak_bins, 5)
+        self.assertTrue(config.save_wav)
 
 
 if __name__ == "__main__":

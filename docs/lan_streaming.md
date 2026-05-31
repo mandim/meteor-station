@@ -59,6 +59,11 @@ Copy the sample config and adjust values if needed:
 cp meteor_station.example.toml meteor_station.toml
 ```
 
+The config now has two relevant sections:
+
+- `[profiles.graves]` for RF/IQ streaming settings
+- `[detector_profiles.graves]` for the tuned GRAVES detector thresholds and review-artifact settings
+
 ### Run the Pi streamer manually
 
 From the repo root:
@@ -173,6 +178,7 @@ Replace `PI_LAN_IP` with the Raspberry Pi address:
 ```bash
 meteor-station-pc-detect \
   --config meteor_station.toml \
+  --detector-profile graves \
   --server-host PI_LAN_IP \
   --server-port 1234 \
   --center-freq-hz 143048400 \
@@ -185,8 +191,13 @@ meteor-station-pc-detect \
 
 Optional flags:
 
-- `--save-wav` to save WAV captures for `meteor_candidate` events
+- `--detector-profile NAME` to select a named detector profile from `[detector_profiles.*]`
+- `--save-wav` to force-enable WAV captures for `meteor_candidate` events
+- `--no-wav` to disable WAV captures if you do not want review audio files
 - `--no-spectrogram` to disable PNG output
+- `--no-detection-waterfall` to disable the per-detection rolling-waterfall snapshot PNG
+- `--detection-waterfall-dir NAME` to change the subdirectory under `--output-dir` used for detection snapshots. Default: `waterfalls`
+- `--detection-waterfall-prefix PREFIX` to change the detection snapshot filename prefix. Default: `event_v3_`
 - `--listen-audio` to hear the demodulated GRAVES audio on the PC speakers
 - `--show-waterfall` to open a live waterfall window on the PC
 - `--audio-output-device INDEX` to choose a specific output device for monitoring
@@ -194,12 +205,23 @@ Optional flags:
 - `--waterfall-window-seconds` and `--waterfall-update-seconds` to control the waterfall history depth and refresh rate
 - `--detection-min-hz` and `--detection-max-hz` if you want to experiment with the v3 audio band
 
+Default behavior:
+
+- the `graves` detector profile is loaded from `[detector_profiles.graves]` in `meteor_station.toml`
+- candidate WAV capture is enabled by default
+- when a `meteor_candidate` event is finalized, the detector saves:
+  `event_v3_XXXXX.png` as a narrow review spectrogram cropped to the GRAVES audio band
+  `waterfalls/event_v3_XXXXX.png` as a short review waterfall snapshot separate from `live_waterfall.png`
+  `event_v3_XXXXX.wav` as the demodulated review audio unless disabled with `--no-wav`
+- `live_waterfall.png` continues to be refreshed in place as the operator overview waterfall
+
 ### Windows PowerShell example with Conda
 
 ```powershell
 conda activate meteor
 meteor-station-pc-detect `
   --config meteor_station.toml `
+  --detector-profile graves `
   --server-host 192.168.1.50 `
   --server-port 1234 `
   --center-freq-hz 143048400 `
@@ -225,6 +247,7 @@ Equivalent full form:
 conda activate meteor
 .\run_pc_receiver.ps1 `
   -Config meteor_station.toml `
+  -DetectorProfile graves `
   -ServerHost 192.168.1.50 `
   -ServerPort 1234 `
   -CenterFreqHz 143048400 `
@@ -237,6 +260,11 @@ conda activate meteor
   -ShowWaterfall `
   -WaterfallPath meteor_logs\live_waterfall.png
 ```
+
+Note:
+
+- `run_pc_receiver.ps1` now exposes `-DetectorProfile`, `-SaveWav`, `-NoWav`, and `-NoDetectionWaterfall`
+- if you want to change `--detection-waterfall-dir` or `--detection-waterfall-prefix`, run `meteor-station-pc-detect` directly
 
 If your Conda environment is not named `meteor`, either activate it first or set:
 
@@ -260,9 +288,16 @@ $env:METEOR_PYTHON = "C:\full\path\to\python.exe"
 By default the PC writes detector outputs into `meteor_logs/` under the current working directory:
 
 - `events_v3.csv`: structured event log
-- `event_v3_XXXXX.png`: spectrograms for `meteor_candidate` detections
-- `event_v3_XXXXX.wav`: optional WAV captures if `--save-wav` is enabled
+- `event_v3_XXXXX.png`: review spectrograms for `meteor_candidate` detections, cropped to the configured GRAVES review band
+- `waterfalls/event_v3_XXXXX.png`: short review waterfall snapshots saved when a `meteor_candidate` detection is finalized
+- `event_v3_XXXXX.wav`: demodulated review WAV captures for `meteor_candidate` detections unless disabled with `--no-wav`
 - `live_waterfall.png`: rolling waterfall of the demodulated audio with UTC time labels
+
+The CSV now includes separate artifact paths:
+
+- `image_file`: event-only spectrogram PNG
+- `waterfall_file`: detection-triggered review-waterfall snapshot PNG
+- `wav_file`: review WAV capture path
 
 If you want outputs somewhere else, pass `--output-dir`.
 
@@ -279,8 +314,13 @@ ss -ltnp | grep 1234
 ### PC-side checks
 
 - startup banner prints the configured server, center frequency, VFO, bandwidth, and output directory
+- startup banner also prints the detector profile, active detection band, and whether WAV / detection-triggered waterfall review artifacts are enabled
 - `meteor_logs/events_v3.csv` is created on startup
-- PNG files appear when `meteor_candidate` events are logged
+- `meteor_logs/live_waterfall.png` is updated while the receiver is running
+- when `meteor_candidate` events are logged, the corresponding review artifacts appear:
+  `meteor_logs/event_v3_XXXXX.png` for the event spectrogram
+  `meteor_logs/waterfalls/event_v3_XXXXX.png` for the short review-waterfall snapshot
+  `meteor_logs/event_v3_XXXXX.wav` for the demodulated review audio unless disabled
 
 ### If the PC cannot connect
 
