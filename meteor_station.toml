@@ -8,6 +8,7 @@ audio_sample_rate = 48000
 rtl_tcp_port = 1234
 
 [detector_profiles.graves]
+detector_mode = "v3"
 detection_min_hz = 1200
 detection_max_hz = 1600
 trigger_db_above_baseline = 11.0
@@ -33,8 +34,18 @@ event_waterfall_max_hz = 1600
 event_waterfall_percentile_min = 20.0
 event_waterfall_percentile_max = 99.8
 review_suppress_below_hz = 1000.0
+review_preroll_blocks = 2
+v4_min_triggered_frames = 2
+v4_min_active_ratio = 0.35
+v4_min_longest_run_frames = 2
+v4_max_freq_jump_count = 2
+v4_min_band_energy_ratio = 0.12
+v4_min_onset_db = 4.0
+v4_min_score = 4
+v4_continuity_max_delta_hz = 23.5
 
 [detector_profiles.graves_sdrsharp]
+detector_mode = "v3"
 detection_min_hz = 1200
 detection_max_hz = 1600
 trigger_db_above_baseline = 11.0
@@ -60,6 +71,89 @@ event_waterfall_max_hz = 1600
 event_waterfall_percentile_min = 20.0
 event_waterfall_percentile_max = 99.8
 review_suppress_below_hz = 1000.0
+review_preroll_blocks = 2
+v4_min_triggered_frames = 2
+v4_min_active_ratio = 0.35
+v4_min_longest_run_frames = 2
+v4_max_freq_jump_count = 2
+v4_min_band_energy_ratio = 0.12
+v4_min_onset_db = 4.0
+v4_min_score = 4
+v4_continuity_max_delta_hz = 23.5
+
+[detector_profiles.graves_v4]
+detector_mode = "v4"
+detection_min_hz = 1200
+detection_max_hz = 1600
+trigger_db_above_baseline = 11.0
+band_rise_db_min = 3.0
+baseline_alpha = 0.003
+end_hangover_s = 0.20
+min_event_duration_s = 0.05
+max_event_duration_s = 5.0
+min_gap_between_events_s = 0.50
+peak_to_median_db_min = 6.5
+near_peak_power_ratio = 0.25
+max_near_peak_bins = 5
+save_spectrogram = true
+save_wav = true
+save_detection_waterfall = true
+specgram_min_hz = 1200
+specgram_max_hz = 1600
+specgram_percentile_min = 20.0
+specgram_percentile_max = 99.8
+event_waterfall_window_seconds = 3.0
+event_waterfall_min_hz = 1200
+event_waterfall_max_hz = 1600
+event_waterfall_percentile_min = 20.0
+event_waterfall_percentile_max = 99.8
+review_suppress_below_hz = 1000.0
+review_preroll_blocks = 2
+v4_min_triggered_frames = 2
+v4_min_active_ratio = 0.35
+v4_min_longest_run_frames = 2
+v4_max_freq_jump_count = 2
+v4_min_band_energy_ratio = 0.12
+v4_min_onset_db = 4.0
+v4_min_score = 4
+v4_continuity_max_delta_hz = 23.5
+
+[detector_profiles.graves_sdrsharp_v4]
+detector_mode = "v4"
+detection_min_hz = 1200
+detection_max_hz = 1600
+trigger_db_above_baseline = 11.0
+band_rise_db_min = 3.0
+baseline_alpha = 0.003
+end_hangover_s = 0.20
+min_event_duration_s = 0.05
+max_event_duration_s = 5.0
+min_gap_between_events_s = 0.50
+peak_to_median_db_min = 6.5
+near_peak_power_ratio = 0.25
+max_near_peak_bins = 5
+save_spectrogram = true
+save_wav = true
+save_detection_waterfall = true
+specgram_min_hz = 1200
+specgram_max_hz = 1600
+specgram_percentile_min = 20.0
+specgram_percentile_max = 99.8
+event_waterfall_window_seconds = 3.0
+event_waterfall_min_hz = 1200
+event_waterfall_max_hz = 1600
+event_waterfall_percentile_min = 20.0
+event_waterfall_percentile_max = 99.8
+review_suppress_below_hz = 1000.0
+review_preroll_blocks = 2
+v4_min_triggered_frames = 2
+v4_min_active_ratio = 0.35
+v4_min_longest_run_frames = 2
+v4_max_freq_jump_count = 2
+v4_min_band_energy_ratio = 0.12
+v4_min_onset_db = 4.0
+v4_min_score = 4
+v4_continuity_max_delta_hz = 23.5
 
 [audio_inputs.sdrsharp_vb_cable]
 device_index = 20
@@ -70,7 +164,23 @@ block_size = 4096
 dtype = "float32"
 queue_max_blocks = 128
 
+[audio_inputs.ubuntu_loopback]
+device_name_contains = "Monitor"
+sample_rate = 48000
+channels = 1
+block_size = 4096
+dtype = "float32"
+queue_max_blocks = 128
+
 [runtime.local_sdrsharp]
+output_dir = "meteor_logs"
+log_level = "INFO"
+save_spectrogram = true
+save_wav = true
+save_detection_waterfall = true
+waterfall_path = "live_waterfall.png"
+
+[runtime.ubuntu_local_audio]
 output_dir = "meteor_logs"
 log_level = "INFO"
 save_spectrogram = true

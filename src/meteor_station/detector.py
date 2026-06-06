@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import time
 import wave
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +26,7 @@ def power_to_db(power_value: float) -> float:
 
 @dataclass(slots=True)
 class DetectorConfig:
+    detector_mode: str = "v3"
     sample_rate: int = 48_000
     block_size: int = 4_096
     detection_min_hz: float = 1_200.0
@@ -46,8 +48,9 @@ class DetectorConfig:
     save_spectrogram: bool = True
     save_wav: bool = True
     save_detection_waterfall: bool = True
+    artifact_prefix: str = ""
     detection_waterfall_dir: str = "waterfalls"
-    detection_waterfall_prefix: str = "event_v3_"
+    detection_waterfall_prefix: str = ""
     specgram_min_hz: float = 1_200.0
     specgram_max_hz: float = 1_600.0
     specgram_percentile_min: float = 20.0
@@ -58,6 +61,15 @@ class DetectorConfig:
     event_waterfall_percentile_min: float = 20.0
     event_waterfall_percentile_max: float = 99.8
     review_suppress_below_hz: float = 1_000.0
+    review_preroll_blocks: int = 2
+    v4_min_triggered_frames: int = 2
+    v4_min_active_ratio: float = 0.35
+    v4_min_longest_run_frames: int = 2
+    v4_max_freq_jump_count: int = 2
+    v4_min_band_energy_ratio: float = 0.12
+    v4_min_onset_db: float = 4.0
+    v4_min_score: int = 4
+    v4_continuity_max_delta_hz: float = 23.5
 
     @classmethod
     def from_graves_profile(
@@ -68,9 +80,11 @@ class DetectorConfig:
         block_size: int = 4_096,
         output_dir: str = "meteor_logs",
         detection_waterfall_dir: str = "waterfalls",
-        detection_waterfall_prefix: str = "event_v3_",
+        detection_waterfall_prefix: str | None = None,
     ) -> "DetectorConfig":
+        artifact_prefix = _artifact_prefix_for_mode(profile.detector_mode)
         return cls(
+            detector_mode=profile.detector_mode,
             sample_rate=sample_rate,
             block_size=block_size,
             detection_min_hz=profile.detection_min_hz,
@@ -89,8 +103,9 @@ class DetectorConfig:
             save_spectrogram=profile.save_spectrogram,
             save_wav=profile.save_wav,
             save_detection_waterfall=profile.save_detection_waterfall,
+            artifact_prefix=artifact_prefix,
             detection_waterfall_dir=detection_waterfall_dir,
-            detection_waterfall_prefix=detection_waterfall_prefix,
+            detection_waterfall_prefix=detection_waterfall_prefix or artifact_prefix,
             specgram_min_hz=profile.specgram_min_hz,
             specgram_max_hz=profile.specgram_max_hz,
             specgram_percentile_min=profile.specgram_percentile_min,
@@ -101,7 +116,29 @@ class DetectorConfig:
             event_waterfall_percentile_min=profile.event_waterfall_percentile_min,
             event_waterfall_percentile_max=profile.event_waterfall_percentile_max,
             review_suppress_below_hz=profile.review_suppress_below_hz,
+            review_preroll_blocks=profile.review_preroll_blocks,
+            v4_min_triggered_frames=profile.v4_min_triggered_frames,
+            v4_min_active_ratio=profile.v4_min_active_ratio,
+            v4_min_longest_run_frames=profile.v4_min_longest_run_frames,
+            v4_max_freq_jump_count=profile.v4_max_freq_jump_count,
+            v4_min_band_energy_ratio=profile.v4_min_band_energy_ratio,
+            v4_min_onset_db=profile.v4_min_onset_db,
+            v4_min_score=profile.v4_min_score,
+            v4_continuity_max_delta_hz=profile.v4_continuity_max_delta_hz,
         )
+
+
+@dataclass(slots=True)
+class FrameAnalysis:
+    block: np.ndarray
+    band_db: float
+    peak_bin_db: float
+    peak_freq_hz: float
+    peak_prominence_db: float
+    near_peak_bins: int
+    band_energy_ratio: float
+    full_band_power_db: float
+    triggered_core: bool
 
 
 @dataclass(slots=True)
@@ -122,6 +159,18 @@ class MeteorEvent:
     image_file: str
     waterfall_file: str
     wav_file: str
+    triggered_frames: int
+    active_ratio: float
+    longest_run_frames: int
+    band_energy_ratio: float
+    freq_jump_count: int
+    score: int
+    decision_reason: str
+    detector_version: str
+
+
+def _artifact_prefix_for_mode(detector_mode: str) -> str:
+    return "event_v4_" if detector_mode == "v4" else "event_v3_"
 
 
 class MeteorDetector:
@@ -134,6 +183,10 @@ class MeteorDetector:
         detection_waterfall_saver: Callable[[Path, DetectorConfig], str | None] | None = None,
     ) -> None:
         self.config = config or DetectorConfig()
+        if not self.config.artifact_prefix:
+            self.config.artifact_prefix = _artifact_prefix_for_mode(self.config.detector_mode)
+        if not self.config.detection_waterfall_prefix:
+            self.config.detection_waterfall_prefix = self.config.artifact_prefix
         self.time_provider = time_provider or time.time
         self.print_fn = print_fn
         self.detection_waterfall_saver = detection_waterfall_saver
@@ -156,13 +209,20 @@ class MeteorDetector:
         self.event_start_ts: float | None = None
         self.event_last_trigger_ts: float | None = None
         self.last_event_end_ts = 0.0
+        self.pre_event_frames: deque[np.ndarray] = deque(maxlen=max(self.config.review_preroll_blocks, 0))
+        self.pre_event_band_db: deque[float] = deque(maxlen=max(self.config.review_preroll_blocks, 0))
         self.event_frames: list[np.ndarray] = []
         self.event_peak_db_values: list[float] = []
         self.event_peak_freqs: list[float] = []
         self.event_peak_prom_values: list[float] = []
         self.event_near_peak_bins_values: list[int] = []
         self.event_band_db_values: list[float] = []
+        self.event_band_energy_ratio_values: list[float] = []
+        self.event_trigger_flags: list[bool] = []
+        self.event_triggered_frames = 0
         self.event_baseline_at_start: float | None = None
+        self.event_preroll_frame_count = 0
+        self.event_preroll_band_db: list[float] = []
 
     def _ensure_csv_header(self) -> None:
         if self.csv_file.exists():
@@ -187,20 +247,65 @@ class MeteorDetector:
                     "image_file",
                     "waterfall_file",
                     "wav_file",
+                    "triggered_frames",
+                    "active_ratio",
+                    "longest_run_frames",
+                    "band_energy_ratio",
+                    "freq_jump_count",
+                    "score",
+                    "decision_reason",
+                    "detector_version",
                 ]
             )
 
-    def classify_event(self, duration_s: float, freq_spread_hz: float, max_near_peak_bins: int) -> str:
+    def classify_event(
+        self,
+        duration_s: float,
+        freq_spread_hz: float,
+        max_near_peak_bins: int,
+        *,
+        triggered_frames: int,
+        active_ratio: float,
+        longest_run_frames: int,
+        band_energy_ratio: float,
+        freq_jump_count: int,
+        onset_db: float,
+    ) -> tuple[str, int, str]:
         if duration_s > self.config.max_event_duration_s:
-            return "too_long"
+            return ("too_long", 0, "duration_above_max")
         if (
             duration_s >= self.config.steady_tone_min_duration_s
             and freq_spread_hz <= self.config.steady_tone_max_spread_hz
         ):
-            return "steady_tone_rejected"
+            return ("steady_tone_rejected", 0, "steady_tone")
+        if self.config.detector_mode != "v4":
+            if max_near_peak_bins > self.config.max_near_peak_bins:
+                return ("broadband_rejected", 0, "too_many_near_peak_bins")
+            return ("meteor_candidate", 0, "v3_thresholds_passed")
+
+        score = 0
+        if triggered_frames >= self.config.v4_min_triggered_frames:
+            score += 1
+        if active_ratio >= self.config.v4_min_active_ratio:
+            score += 1
+        if longest_run_frames >= self.config.v4_min_longest_run_frames:
+            score += 1
+        if freq_jump_count <= self.config.v4_max_freq_jump_count:
+            score += 1
+        if band_energy_ratio >= self.config.v4_min_band_energy_ratio:
+            score += 1
+        if onset_db >= self.config.v4_min_onset_db:
+            score += 1
+
+        if triggered_frames < self.config.v4_min_triggered_frames and active_ratio < 0.25:
+            return ("impulse_rejected", score, "single_frame_impulse")
+        if band_energy_ratio < self.config.v4_min_band_energy_ratio and active_ratio < self.config.v4_min_active_ratio:
+            return ("impulse_rejected", score, "weak_band_concentration")
         if max_near_peak_bins > self.config.max_near_peak_bins:
-            return "broadband_rejected"
-        return "meteor_candidate"
+            return ("broadband_rejected", score, "too_many_near_peak_bins")
+        if score < self.config.v4_min_score:
+            return ("weak_narrowband_rejected", score, "insufficient_v4_score")
+        return ("meteor_candidate", score, "v4_score_passed")
 
     def process_block(self, block: np.ndarray, timestamp: float | None = None) -> list[MeteorEvent]:
         x = np.asarray(block, dtype=np.float32)
@@ -211,71 +316,48 @@ class MeteorDetector:
                 f"Expected block of {self.config.block_size} samples, got {x.shape[0]}."
             )
 
-        xw = x * self.window
-        spectrum = np.fft.rfft(xw)
-        power = np.abs(spectrum) ** 2
-        band_power_values = power[self.band_mask]
-        band_freqs = self.freqs[self.band_mask]
-
-        mean_band_power = float(np.mean(band_power_values))
-        median_band_power = float(np.median(band_power_values))
-        band_db = power_to_db(mean_band_power)
-        median_band_db = power_to_db(median_band_power)
-
-        peak_idx = int(np.argmax(band_power_values))
-        peak_freq_hz = float(band_freqs[peak_idx])
-        peak_bin_power = float(band_power_values[peak_idx])
-        peak_bin_db = power_to_db(peak_bin_power)
-        peak_prominence_db = peak_bin_db - median_band_db
-        near_peak_bins = int(
-            np.sum(band_power_values >= (peak_bin_power * self.config.near_peak_power_ratio))
-        )
-
         now_ts = timestamp if timestamp is not None else self.time_provider()
+        analysis = self._analyze_block(x)
         events: list[MeteorEvent] = []
 
         if self.baseline_db is None:
-            self.baseline_db = band_db
+            self.baseline_db = analysis.band_db
         if not self.in_event:
             self.baseline_db = (
                 (1.0 - self.config.baseline_alpha) * self.baseline_db
-                + self.config.baseline_alpha * band_db
+                + self.config.baseline_alpha * analysis.band_db
             )
 
         threshold_db = self.baseline_db + self.config.trigger_db_above_baseline
-        band_rise_db = band_db - self.baseline_db
+        band_rise_db = analysis.band_db - self.baseline_db
         triggered_core = (
-            peak_bin_db >= threshold_db
-            and peak_prominence_db >= self.config.peak_to_median_db_min
+            analysis.peak_bin_db >= threshold_db
+            and analysis.peak_prominence_db >= self.config.peak_to_median_db_min
             and band_rise_db >= self.config.band_rise_db_min
         )
-        triggered = triggered_core and near_peak_bins <= self.config.max_near_peak_bins
 
         if triggered_core:
             if not self.in_event and (now_ts - self.last_event_end_ts) >= self.config.min_gap_between_events_s:
                 self._start_event(
                     now_ts,
-                    peak_bin_db,
+                    analysis,
                     threshold_db,
                     band_rise_db,
-                    peak_prominence_db,
-                    peak_freq_hz,
-                    near_peak_bins,
                 )
             elif self.in_event:
                 self.event_last_trigger_ts = now_ts
 
         if self.in_event:
             self.event_frames.append(x.copy())
+            self.event_trigger_flags.append(analysis.triggered_core)
             if triggered_core:
-                # Classify quality from blocks that actually met the meteor trigger.
-                # Hangover frames are kept in the saved review audio/image, but they
-                # should not turn a narrowband trigger into a broadband rejection.
-                self.event_peak_db_values.append(peak_bin_db)
-                self.event_peak_freqs.append(peak_freq_hz)
-                self.event_peak_prom_values.append(peak_prominence_db)
-                self.event_near_peak_bins_values.append(near_peak_bins)
-                self.event_band_db_values.append(band_db)
+                self.event_peak_db_values.append(analysis.peak_bin_db)
+                self.event_peak_freqs.append(analysis.peak_freq_hz)
+                self.event_peak_prom_values.append(analysis.peak_prominence_db)
+                self.event_near_peak_bins_values.append(analysis.near_peak_bins)
+                self.event_band_db_values.append(analysis.band_db)
+                self.event_band_energy_ratio_values.append(analysis.band_energy_ratio)
+                self.event_triggered_frames += 1
 
             if self.event_start_ts is not None and (now_ts - self.event_start_ts) >= self.config.max_event_duration_s:
                 event = self._finalize_event(now_ts, forced_type="too_long")
@@ -292,6 +374,10 @@ class MeteorDetector:
                 else:
                     self.print_fn(f"[{local_iso_from_ts(now_ts)}] Short trigger ignored")
                     self._reset_active_event(now_ts)
+        else:
+            if self.config.review_preroll_blocks > 0:
+                self.pre_event_frames.append(x.copy())
+                self.pre_event_band_db.append(analysis.band_db)
 
         return events
 
@@ -309,32 +395,72 @@ class MeteorDetector:
         self._reset_active_event(now_ts)
         return []
 
+    def _analyze_block(self, x: np.ndarray) -> FrameAnalysis:
+        xw = x * self.window
+        spectrum = np.fft.rfft(xw)
+        power = np.abs(spectrum) ** 2
+        band_power_values = power[self.band_mask]
+        band_freqs = self.freqs[self.band_mask]
+
+        mean_band_power = float(np.mean(band_power_values))
+        median_band_power = float(np.median(band_power_values))
+        total_power = float(np.sum(power))
+        band_total_power = float(np.sum(band_power_values))
+        band_db = power_to_db(mean_band_power)
+        median_band_db = power_to_db(median_band_power)
+
+        peak_idx = int(np.argmax(band_power_values))
+        peak_freq_hz = float(band_freqs[peak_idx])
+        peak_bin_power = float(band_power_values[peak_idx])
+        peak_bin_db = power_to_db(peak_bin_power)
+        peak_prominence_db = peak_bin_db - median_band_db
+        near_peak_bins = int(
+            np.sum(band_power_values >= (peak_bin_power * self.config.near_peak_power_ratio))
+        )
+        band_energy_ratio = band_total_power / max(total_power, 1e-12)
+        full_band_power_db = power_to_db(total_power)
+        return FrameAnalysis(
+            block=x.copy(),
+            band_db=band_db,
+            peak_bin_db=peak_bin_db,
+            peak_freq_hz=peak_freq_hz,
+            peak_prominence_db=peak_prominence_db,
+            near_peak_bins=near_peak_bins,
+            band_energy_ratio=band_energy_ratio,
+            full_band_power_db=full_band_power_db,
+            triggered_core=near_peak_bins <= self.config.max_near_peak_bins,
+        )
+
     def _start_event(
         self,
         now_ts: float,
-        peak_bin_db: float,
+        analysis: FrameAnalysis,
         threshold_db: float,
         band_rise_db: float,
-        peak_prominence_db: float,
-        peak_freq_hz: float,
-        near_peak_bins: int,
     ) -> None:
         self.in_event = True
         self.event_id += 1
         self.event_start_ts = now_ts
         self.event_last_trigger_ts = now_ts
-        self.event_frames = []
+        self.event_frames = list(self.pre_event_frames)
+        self.event_trigger_flags = [False] * len(self.event_frames)
         self.event_peak_db_values = []
         self.event_peak_freqs = []
         self.event_peak_prom_values = []
         self.event_near_peak_bins_values = []
         self.event_band_db_values = []
+        self.event_band_energy_ratio_values = []
+        self.event_triggered_frames = 0
         self.event_baseline_at_start = self.baseline_db
+        self.event_preroll_frame_count = len(self.event_frames)
+        self.event_preroll_band_db = list(self.pre_event_band_db)
+        self.pre_event_frames.clear()
+        self.pre_event_band_db.clear()
         self.print_fn(
             f"[{local_iso_from_ts(now_ts)}] Event {self.event_id} started | "
-            f"peak={peak_bin_db:.2f} dB threshold={threshold_db:.2f} dB "
-            f"band_rise={band_rise_db:.2f} dB prom={peak_prominence_db:.2f} dB "
-            f"freq={peak_freq_hz:.1f} Hz near_bins={near_peak_bins}"
+            f"peak={analysis.peak_bin_db:.2f} dB threshold={threshold_db:.2f} dB "
+            f"band_rise={band_rise_db:.2f} dB prom={analysis.peak_prominence_db:.2f} dB "
+            f"freq={analysis.peak_freq_hz:.1f} Hz near_bins={analysis.near_peak_bins}"
         )
 
     def _finalize_event(self, event_end_ts: float, forced_type: str | None = None) -> MeteorEvent | None:
@@ -351,13 +477,39 @@ class MeteorDetector:
         peak_prominence_db = float(np.max(self.event_peak_prom_values))
         max_near_peak_bins = int(np.max(self.event_near_peak_bins_values))
         band_db_at_start = float(self.event_band_db_values[0])
-        event_type = forced_type or self.classify_event(duration_s, freq_spread, max_near_peak_bins)
+        active_ratio = self.event_triggered_frames / max(len(self.event_frames), 1)
+        longest_run_frames, freq_jump_count = _continuity_metrics(
+            self.event_peak_freqs,
+            max_delta_hz=self.config.v4_continuity_max_delta_hz,
+        )
+        band_energy_ratio = float(np.mean(self.event_band_energy_ratio_values))
+        onset_reference_db = (
+            float(np.mean(self.event_preroll_band_db))
+            if self.event_preroll_band_db
+            else (self.event_baseline_at_start if self.event_baseline_at_start is not None else band_db_at_start)
+        )
+        onset_db = peak_db - onset_reference_db
+
+        if forced_type is not None:
+            event_type, score, decision_reason = (forced_type, 0, forced_type)
+        else:
+            event_type, score, decision_reason = self.classify_event(
+                duration_s,
+                freq_spread,
+                max_near_peak_bins,
+                triggered_frames=self.event_triggered_frames,
+                active_ratio=active_ratio,
+                longest_run_frames=longest_run_frames,
+                band_energy_ratio=band_energy_ratio,
+                freq_jump_count=freq_jump_count,
+                onset_db=onset_db,
+            )
 
         image_file = ""
         waterfall_file = ""
         wav_file = ""
         if self.config.save_spectrogram and event_type == "meteor_candidate":
-            image_file = str(self.output_dir / f"event_v3_{self.event_id:05d}.png")
+            image_file = str(self.output_dir / f"{self.config.artifact_prefix}{self.event_id:05d}.png")
             save_spectrogram(
                 self.event_frames,
                 self.config.sample_rate,
@@ -377,9 +529,9 @@ class MeteorDetector:
             if self.detection_waterfall_saver is not None:
                 saved_waterfall = self.detection_waterfall_saver(waterfall_path, self.config)
                 if saved_waterfall:
-                    waterfall_file = saved_waterfall
+                    waterfall_file = str(Path(saved_waterfall).resolve(strict=False))
         if self.config.save_wav and event_type == "meteor_candidate":
-            wav_file = str(self.output_dir / f"event_v3_{self.event_id:05d}.wav")
+            wav_file = str(self.output_dir / f"{self.config.artifact_prefix}{self.event_id:05d}.wav")
             save_wav(self.event_frames, self.config.sample_rate, Path(wav_file))
 
         event = MeteorEvent(
@@ -399,6 +551,14 @@ class MeteorDetector:
             image_file=image_file,
             waterfall_file=waterfall_file,
             wav_file=wav_file,
+            triggered_frames=self.event_triggered_frames,
+            active_ratio=round(active_ratio, 3),
+            longest_run_frames=longest_run_frames,
+            band_energy_ratio=round(band_energy_ratio, 3),
+            freq_jump_count=freq_jump_count,
+            score=score,
+            decision_reason=decision_reason,
+            detector_version=self.config.detector_mode,
         )
         self._write_event(event)
         self.print_fn(
@@ -406,7 +566,8 @@ class MeteorDetector:
             f"type={event.event_type} duration={event.duration_s:.2f}s "
             f"peak={event.peak_db:.2f} dB dom_freq={event.dominant_freq_hz:.1f} Hz "
             f"spread={event.freq_spread_hz:.1f} Hz prom={event.peak_prominence_db:.1f} dB "
-            f"near_bins={event.max_near_peak_bins}"
+            f"near_bins={event.max_near_peak_bins} active_ratio={event.active_ratio:.2f} "
+            f"band_ratio={event.band_energy_ratio:.2f} score={event.score}"
         )
         self._reset_active_event(event_end_ts)
         return event
@@ -422,7 +583,12 @@ class MeteorDetector:
         self.event_peak_prom_values = []
         self.event_near_peak_bins_values = []
         self.event_band_db_values = []
+        self.event_band_energy_ratio_values = []
+        self.event_trigger_flags = []
+        self.event_triggered_frames = 0
         self.event_baseline_at_start = None
+        self.event_preroll_frame_count = 0
+        self.event_preroll_band_db = []
 
     def _write_event(self, event: MeteorEvent) -> None:
         with self.csv_file.open("a", newline="", encoding="utf-8") as handle:
@@ -445,8 +611,32 @@ class MeteorDetector:
                     event.image_file,
                     event.waterfall_file,
                     event.wav_file,
+                    event.triggered_frames,
+                    event.active_ratio,
+                    event.longest_run_frames,
+                    event.band_energy_ratio,
+                    event.freq_jump_count,
+                    event.score,
+                    event.decision_reason,
+                    event.detector_version,
                 ]
             )
+
+
+def _continuity_metrics(freqs: list[float], *, max_delta_hz: float) -> tuple[int, int]:
+    if not freqs:
+        return (0, 0)
+    longest_run = 1
+    current_run = 1
+    jump_count = 0
+    for prev_freq, cur_freq in zip(freqs, freqs[1:]):
+        if abs(cur_freq - prev_freq) <= max_delta_hz:
+            current_run += 1
+        else:
+            jump_count += 1
+            current_run = 1
+        longest_run = max(longest_run, current_run)
+    return (longest_run, jump_count)
 
 
 def save_spectrogram(
@@ -469,7 +659,7 @@ def save_spectrogram(
     FigureCanvasAgg(fig)
     ax = fig.add_subplot(111)
     with np.errstate(divide="ignore"):
-        power, freqs, bins, image = ax.specgram(x, NFFT=1024, Fs=sample_rate, noverlap=768)
+        power, freqs, _bins, image = ax.specgram(x, NFFT=1024, Fs=sample_rate, noverlap=768)
     scaled_power = _prepare_review_power_db(
         power,
         freqs,
@@ -488,10 +678,11 @@ def save_spectrogram(
 
 
 def save_wav(frames: list[np.ndarray], sample_rate: int, out_path: Path) -> None:
+    destination = normalize_output_path(out_path)
     x = np.concatenate(frames)
     x = np.clip(x, -1.0, 1.0)
     pcm16 = (x * 32767.0).astype(np.int16)
-    with wave.open(str(out_path), "wb") as wf:
+    with wave.open(str(destination), "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(sample_rate)

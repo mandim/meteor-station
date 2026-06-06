@@ -1,21 +1,25 @@
 # SDR# Local Detection Pipeline
 
+This guide is for the Windows-only SDR# and VB-CABLE workflow on a LattePanda or other mini PC.
+
+Related docs:
+- [Operator Guide](/C:/Users/mandi/Desktop/meteor_station/docs/operator_guide.md)
+- [Ubuntu Local Audio Setup](/C:/Users/mandi/Desktop/meteor_station/docs/ubuntu_local_audio_pipeline.md)
+- [LAN Streaming](/C:/Users/mandi/Desktop/meteor_station/docs/lan_streaming.md)
+
 ## Overview
-This pipeline runs entirely on the same Windows mini PC:
-
-- `SDR#` tunes the receiver and outputs demodulated USB audio.
+- `SDR#` tunes the receiver and demodulates USB audio.
 - `VB-CABLE` exposes that audio as a Windows recording device.
-- `meteor-station-sdrsharp-detect` reads that local audio input.
-- The detector writes event logs and review artifacts to disk on the same machine.
+- `meteor-station-sdrsharp-detect` reads the local audio input and runs the detector.
 
-There is no `rtl_tcp`, no network hop, and no Raspberry Pi in this workflow.
+There is no `rtl_tcp` hop in this workflow.
 
 ## Prerequisites
-- Windows on the LattePanda Alpha
-- Python 3.10 or newer
+- Windows on the LattePanda or PC
+- Python `3.10+`
 - SDR#
 - VB-CABLE installed and visible in Windows audio devices
-- Python dependencies installed from this repo:
+- Repo dependencies installed:
 
 ```powershell
 python -m pip install -e .
@@ -23,35 +27,30 @@ python -m pip install -e .
 
 ## One-Time Setup
 ### 1. Configure SDR#
-Use the tuned GRAVES assumptions from the original SDR# workflow:
+Use the current GRAVES assumptions:
 
 - Mode: `USB`
-- RF tuned frequency / VFO: `143.048400 MHz`
+- VFO / tuned frequency: `143.048400 MHz`
 - Expected carrier: `143.050000 MHz`
-- Audio offset of interest: about `1600 Hz`
+- Audio tone of interest: about `1600 Hz`
 - Bandwidth: `3.000 kHz`
 
-The detector default profile `graves_sdrsharp` is set up for that audio band and trigger behavior.
-
 ### 2. Configure VB-CABLE
-- In SDR#, route audio output to the VB-CABLE playback device.
-- In Windows, confirm the matching VB-CABLE recording/input device exists.
-- Keep the Windows audio path at `48000 Hz` if possible.
+- Route SDR# audio output to the VB-CABLE playback device.
+- Confirm the matching VB-CABLE recording/input device exists in Windows.
+- Keep the Windows audio path at `48000 Hz`.
 
-### 3. List usable input devices
-Run:
+### 3. List input devices
 
 ```powershell
 meteor-station-sdrsharp-detect --list-audio-devices
 ```
 
-Find the VB-CABLE input device. Record either:
+Record either:
+- the numeric `device_index`
+- a stable substring such as `CABLE Output`
 
-- its numeric device index, or
-- a stable substring from its name, such as `CABLE Output`
-
-### 4. Configure `meteor_station.toml`
-Copy the example if needed:
+### 4. Prepare the config
 
 ```powershell
 Copy-Item meteor_station.example.toml meteor_station.toml
@@ -71,132 +70,78 @@ queue_max_blocks = 128
 
 [runtime.local_sdrsharp]
 output_dir = "meteor_logs"
-log_level = "INFO"
 save_spectrogram = true
 save_wav = true
 save_detection_waterfall = true
 waterfall_path = "live_waterfall.png"
 
 [detector_profiles.graves_sdrsharp]
-detection_min_hz = 1200
-detection_max_hz = 1600
-trigger_db_above_baseline = 11.0
-band_rise_db_min = 3.0
-peak_to_median_db_min = 6.5
-max_near_peak_bins = 5
+detector_mode = "v3"
+
+[detector_profiles.graves_sdrsharp_v4]
+detector_mode = "v4"
 ```
 
 Notes:
 - `device_index` takes priority over `device_name_contains`.
-- `waterfall_path` is relative to `output_dir` unless you provide an absolute path.
-- `block_size` and `sample_rate` should normally stay at `4096` and `48000`.
+- `graves_sdrsharp` keeps the current detector behavior.
+- `graves_sdrsharp_v4` enables the stricter false-positive-reduction path.
 
-## Daily Use
-### Start live detection
-
-```powershell
-meteor-station-sdrsharp-detect --config meteor_station.toml
-```
-
-Typical startup output shows:
-
-- live vs WAV mode
-- sample rate
-- block size
-- output directory
-- detection band
-- artifact flags
-- selected input device
-
-### Override settings from the command line
-Examples:
+## Run Live Detection
+Current detector:
 
 ```powershell
-meteor-station-sdrsharp-detect --config meteor_station.toml --device-index 18
-meteor-station-sdrsharp-detect --config meteor_station.toml --device-name "CABLE Output"
-meteor-station-sdrsharp-detect --config meteor_station.toml --output-dir D:\meteor_logs
-meteor-station-sdrsharp-detect --config meteor_station.toml --no-wav
+meteor-station-sdrsharp-detect `
+  --config meteor_station.toml `
+  --audio-input-profile sdrsharp_vb_cable `
+  --runtime-profile local_sdrsharp `
+  --detector-profile graves_sdrsharp
 ```
 
-### Stop the detector
-Press `Ctrl+C`.
+Stricter detector:
 
-The detector will stop the input stream and finalize any pending event state before exit.
+```powershell
+meteor-station-sdrsharp-detect `
+  --config meteor_station.toml `
+  --audio-input-profile sdrsharp_vb_cable `
+  --runtime-profile local_sdrsharp `
+  --detector-profile graves_sdrsharp_v4
+```
 
-## Output Files
+Equivalent one-off mode override:
+
+```powershell
+meteor-station-sdrsharp-detect --config meteor_station.toml --detector-profile graves_sdrsharp --detector-mode v4
+```
+
+## Offline Validation
+Run the same detector path against a saved WAV:
+
+```powershell
+meteor-station-sdrsharp-detect `
+  --config meteor_station.toml `
+  --detector-profile graves_sdrsharp_v4 `
+  --input-wav C:\path\to\fixture.wav
+```
+
+Use this to compare `v3` and `v4` on the same recording before trusting a live overnight run.
+
+## Outputs
 By default outputs go to `meteor_logs/`.
 
 Expected files:
-- `events_v3.csv`: structured event log
-- `event_v3_00001.png`: saved spectrogram for a meteor candidate
-- `event_v3_00001.wav`: saved review audio for a meteor candidate
-- `live_waterfall.png`: rolling waterfall image
-- `waterfalls/event_v3_00001.png`: candidate review waterfall snapshot
+- `events_v3.csv`
+- `event_v3_00001.png` or `event_v4_00001.png`
+- `event_v3_00001.wav` or `event_v4_00001.wav`
+- `live_waterfall.png`
+- `waterfalls/event_v3_00001.png` or `waterfalls/event_v4_00001.png`
 
-Only `meteor_candidate` events create review artifacts. Rejected events still appear in the CSV.
-
-## Offline Validation with a WAV File
-You can validate the exact detector path without SDR# running:
-
-```powershell
-meteor-station-sdrsharp-detect --config meteor_station.toml --input-wav C:\path\to\fixture.wav
-```
-
-Use this to:
-- verify config changes against a known recording
-- test artifact generation
-- compare false positives and threshold changes
-
-The WAV file must match the configured sample rate, normally `48000 Hz`.
+The CSV keeps the existing core columns and appends v4 review metrics such as `triggered_frames`, `active_ratio`, `band_energy_ratio`, `score`, `decision_reason`, and `detector_version`.
 
 ## Troubleshooting
-### No audio arriving
-- Confirm SDR# is sending audio to VB-CABLE, not your speakers.
-- Confirm the Python process is reading the VB-CABLE input device, not a microphone.
-- Run `--list-audio-devices` again and re-check the device index after reboots or driver changes.
+Use the shared symptom-based guide in [Operator Guide](/C:/Users/mandi/Desktop/meteor_station/docs/operator_guide.md).
 
-### Wrong device selected
-- Prefer `device_index` once the correct device is known.
-- If the index changes often, remove `device_index` and rely on `device_name_contains`.
-
-### Sample-rate mismatch
-- Keep SDR#, Windows device settings, and the detector config aligned at `48000 Hz`.
-- WAV mode will fail fast if the file sample rate does not match the configured rate.
-
-### No detections despite a visible carrier
-- Confirm SDR# is in `USB` mode.
-- Confirm the carrier lands near the detector band `1200-1600 Hz`.
-- Check that the tuned SDR# frequency still matches the expected GRAVES offset.
-- Review whether the signal is present in `live_waterfall.png`.
-
-### Too many false positives
-- Tighten detector thresholds in `[detector_profiles.graves_sdrsharp]`.
-- Start with `trigger_db_above_baseline`, `peak_to_median_db_min`, and `max_near_peak_bins`.
-- Validate changes first with `--input-wav` before trusting a live run.
-
-### Callback overflow or dropped audio
-- Look for `WARNING:` lines in the console.
-- Increase `queue_max_blocks`.
-- Reduce background CPU load on the LattePanda Alpha.
-- Avoid running heavy GUI tasks on the same machine during continuous monitoring.
-
-## Configuration Reference
-### `[audio_inputs.sdrsharp_vb_cable]`
-- `device_index`: exact Windows input device index
-- `device_name_contains`: fallback substring match
-- `sample_rate`: expected audio sample rate
-- `channels`: input channels from the Windows device
-- `block_size`: detector block size
-- `dtype`: `sounddevice` input sample format
-- `queue_max_blocks`: backlog size before audio blocks are dropped
-
-### `[runtime.local_sdrsharp]`
-- `output_dir`: root directory for logs and artifacts
-- `log_level`: reserved runtime verbosity field
-- `save_spectrogram`: enable candidate spectrogram PNGs
-- `save_wav`: enable candidate WAV review files
-- `save_detection_waterfall`: enable rolling waterfall and candidate snapshot output
-- `waterfall_path`: rolling waterfall PNG path
-
-### `[detector_profiles.graves_sdrsharp]`
-This holds the tuned meteor detection thresholds. Treat it as the algorithm profile, not as device config.
+Windows-specific checks:
+- If no audio arrives, confirm SDR# is feeding VB-CABLE rather than speakers.
+- If the wrong device is selected, rerun `--list-audio-devices` after reboots or driver changes.
+- If there are too many false positives, compare `graves_sdrsharp` against `graves_sdrsharp_v4` on the same WAV fixture before changing thresholds.

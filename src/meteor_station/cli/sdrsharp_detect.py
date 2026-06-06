@@ -27,21 +27,36 @@ from meteor_station.monitoring import RollingWaterfall, WaterfallConfig
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the local SDR# meteor detector against VB-CABLE audio or a WAV fixture."
+        description="Run the local audio meteor detector against a live input device or a WAV fixture."
     )
     parser.add_argument("--config", help="Optional TOML config file.")
+    parser.add_argument(
+        "--audio-input-profile",
+        default="sdrsharp_vb_cable",
+        help="Named audio input profile from [audio_inputs.*] in the TOML config.",
+    )
+    parser.add_argument(
+        "--runtime-profile",
+        default="local_sdrsharp",
+        help="Named runtime profile from [runtime.*] in the TOML config.",
+    )
     parser.add_argument(
         "--detector-profile",
         default=DEFAULT_SDRSHARP_DETECTION_PROFILE,
         help="Named detector profile from [detector_profiles.*] in the TOML config.",
     )
     parser.add_argument(
+        "--detector-mode",
+        choices=("v3", "v4"),
+        help="Override detector mode independently of the selected detector profile.",
+    )
+    parser.add_argument(
         "--list-audio-devices",
         action="store_true",
-        help="List usable Windows input devices and exit.",
+        help="List usable input devices and exit.",
     )
     parser.add_argument("--input-wav", help="Run the detector against a prerecorded WAV file.")
-    parser.add_argument("--device-index", type=int, help="Windows input device index.")
+    parser.add_argument("--device-index", type=int, help="Input device index.")
     parser.add_argument("--device-name", help="Case-insensitive substring to match the input device name.")
     parser.add_argument("--sample-rate", type=int, help="Audio sample rate in samples per second.")
     parser.add_argument("--channels", type=int, help="Input channel count.")
@@ -73,8 +88,8 @@ def main() -> int:
         _print_audio_devices()
         return 0
 
-    audio_input = load_audio_input_config(args.config)
-    runtime = load_local_sdrsharp_runtime_config(args.config)
+    audio_input = load_audio_input_config(args.config, input_name=args.audio_input_profile)
+    runtime = load_local_sdrsharp_runtime_config(args.config, runtime_name=args.runtime_profile)
     detector_profile = load_graves_detector_profile(args.config, profile_name=args.detector_profile)
 
     _apply_audio_overrides(audio_input, args)
@@ -86,6 +101,10 @@ def main() -> int:
         block_size=audio_input.block_size,
         output_dir=runtime.output_dir,
     )
+    if args.detector_mode:
+        detector_config.detector_mode = args.detector_mode
+        detector_config.artifact_prefix = ""
+        detector_config.detection_waterfall_prefix = ""
     detector_config.save_spectrogram = runtime.save_spectrogram
     detector_config.save_wav = runtime.save_wav
     detector_config.save_detection_waterfall = runtime.save_detection_waterfall
@@ -108,7 +127,14 @@ def main() -> int:
         ),
     )
 
-    _print_startup_summary(audio_input, runtime, detector_config, args.input_wav)
+    _print_startup_summary(
+        audio_input,
+        runtime,
+        detector_config,
+        args.input_wav,
+        audio_input_profile=args.audio_input_profile,
+        runtime_profile=args.runtime_profile,
+    )
 
     if args.input_wav:
         try:
@@ -232,10 +258,15 @@ def _print_startup_summary(
     runtime: LocalSdrsharpRuntimeConfig,
     detector_config: DetectorConfig,
     wav_path: str | None,
+    *,
+    audio_input_profile: str,
+    runtime_profile: str,
 ) -> None:
     mode = "wav" if wav_path else "live"
-    print("Starting SDR# local meteor detector...")
+    print("Starting local audio meteor detector...")
     print(f"  mode={mode}")
+    print(f"  audio_input_profile={audio_input_profile}")
+    print(f"  runtime_profile={runtime_profile}")
     if wav_path:
         print(f"  input_wav={wav_path}")
     print(f"  sample_rate={audio_input.sample_rate}")
@@ -246,6 +277,7 @@ def _print_startup_summary(
     print(
         f"  detection_band_hz={detector_config.detection_min_hz}-{detector_config.detection_max_hz}"
     )
+    print(f"  detector_mode={detector_config.detector_mode}")
     print(f"  save_spectrogram={detector_config.save_spectrogram}")
     print(f"  save_wav={detector_config.save_wav}")
     print(f"  save_detection_waterfall={detector_config.save_detection_waterfall}")

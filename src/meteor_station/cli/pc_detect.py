@@ -24,6 +24,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_DETECTION_PROFILE,
         help="Named detector profile from [detector_profiles.*] in the TOML config.",
     )
+    parser.add_argument(
+        "--detector-mode",
+        choices=("v3", "v4"),
+        help="Override detector mode independently of the selected detector profile.",
+    )
     parser.add_argument("--server-host", default="127.0.0.1", help="rtl_tcp server host.")
     parser.add_argument("--server-port", type=int, help="rtl_tcp server port.")
     parser.add_argument("--carrier-hz", type=int, help="GRAVES carrier frequency in Hz.")
@@ -49,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--detection-waterfall-prefix",
-        default="event_v3_",
+        default=None,
         help="Filename prefix for detection-triggered waterfall snapshots.",
     )
     parser.add_argument("--detection-min-hz", type=float, help="Detector lower frequency bound in Hz.")
@@ -93,6 +98,10 @@ def main() -> int:
         detection_waterfall_dir=args.detection_waterfall_dir,
         detection_waterfall_prefix=args.detection_waterfall_prefix,
     )
+    if args.detector_mode:
+        detector_config.detector_mode = args.detector_mode
+        detector_config.artifact_prefix = ""
+        detector_config.detection_waterfall_prefix = ""
     if args.detection_min_hz is not None:
         detector_config.detection_min_hz = args.detection_min_hz
     if args.detection_max_hz is not None:
@@ -161,6 +170,7 @@ def main() -> int:
     print(f"  audio_sample_rate={receiver.config.audio_sample_rate}")
     print(f"  output_dir={detector.config.output_dir}")
     print(f"  detector_profile={args.detector_profile}")
+    print(f"  detector_mode={detector.config.detector_mode}")
     print(f"  detection_band_hz={detector.config.detection_min_hz}-{detector.config.detection_max_hz}")
     print(f"  save_wav={detector.config.save_wav}")
     print(f"  waterfall_path={waterfall_path}")

@@ -10,7 +10,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 
 from meteor_station.detector import DetectorConfig, MeteorDetector
-from fixtures import broadband_false_positive_fixture, meteor_candidate_fixture
+from fixtures import (
+    broadband_false_positive_fixture,
+    drifting_meteor_fixture,
+    impulse_false_positive_fixture,
+    meteor_candidate_fixture,
+    repeated_impulse_fixture,
+    weak_noise_spike_fixture,
+)
 
 
 def iter_blocks(signal: np.ndarray, block_size: int) -> list[np.ndarray]:
@@ -79,12 +86,55 @@ class DetectorTests(unittest.TestCase):
 
     def test_default_detector_config_matches_graves_profile_expectations(self):
         config = DetectorConfig()
+        self.assertEqual(config.detector_mode, "v3")
         self.assertEqual(config.detection_min_hz, 1200.0)
         self.assertEqual(config.detection_max_hz, 1600.0)
         self.assertEqual(config.trigger_db_above_baseline, 11.0)
         self.assertEqual(config.peak_to_median_db_min, 6.5)
         self.assertEqual(config.max_near_peak_bins, 5)
         self.assertTrue(config.save_wav)
+
+    def test_v4_impulse_is_rejected(self):
+        signal = impulse_false_positive_fixture(self.sample_rate)
+        events, rows = self._run_detector(
+            signal,
+            detector_mode="v4",
+            trigger_db_above_baseline=6.0,
+            band_rise_db_min=1.0,
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "impulse_rejected")
+        self.assertEqual(rows[1][23], "v4")
+
+    def test_v4_drifting_meteor_is_candidate(self):
+        signal = drifting_meteor_fixture(self.sample_rate)
+        events, rows = self._run_detector(signal, detector_mode="v4")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "meteor_candidate")
+        self.assertGreaterEqual(events[0].longest_run_frames, 2)
+        self.assertGreaterEqual(float(rows[1][17]), 0.2)
+
+    def test_v4_repeated_impulses_do_not_pass(self):
+        signal = repeated_impulse_fixture(self.sample_rate)
+        events, _ = self._run_detector(
+            signal,
+            detector_mode="v4",
+            trigger_db_above_baseline=6.0,
+            band_rise_db_min=1.0,
+        )
+        self.assertTrue(events)
+        self.assertTrue(all(event.event_type != "meteor_candidate" for event in events))
+
+    def test_v4_weak_spike_is_rejected(self):
+        signal = weak_noise_spike_fixture(self.sample_rate)
+        events, _ = self._run_detector(
+            signal,
+            detector_mode="v4",
+            trigger_db_above_baseline=6.0,
+            band_rise_db_min=1.0,
+        )
+        self.assertTrue(events)
+        self.assertNotEqual(events[0].event_type, "meteor_candidate")
 
 
 if __name__ == "__main__":

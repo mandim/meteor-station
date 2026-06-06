@@ -1,0 +1,2 @@
+event_id,start_local,end_local,duration_s,peak_db,avg_db,dominant_freq_hz,freq_spread_hz,baseline_db,band_db_at_start,peak_prominence_db,max_near_peak_bins,event_type,image_file,waterfall_file,wav_file,triggered_frames,active_ratio,longest_run_frames,band_energy_ratio,freq_jump_count,score,decision_reason,detector_version
+1,1970-01-01T02:00:01.085333,1970-01-01T02:00:01.885333,0.8,57.27,45.34,1593.8,0.0,-36.11,29.93,82.08,3,meteor_candidate,,,,8,0.615,8,0.477,0,0,v3_thresholds_passed,v3

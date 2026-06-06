@@ -27,6 +27,7 @@ from meteor_station.receiver import NetworkMeteorReceiver, ReceiverConfig
 class ReceiverPipelineTests(unittest.TestCase):
     def test_load_graves_detector_profile_defaults(self):
         profile = load_graves_detector_profile()
+        self.assertEqual(profile.detector_mode, "v3")
         self.assertEqual(profile.detection_min_hz, 1200.0)
         self.assertEqual(profile.detection_max_hz, 1600.0)
         self.assertEqual(profile.max_near_peak_bins, 5)

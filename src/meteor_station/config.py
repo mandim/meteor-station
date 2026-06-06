@@ -33,6 +33,7 @@ class GravesProfile:
 
 @dataclass(slots=True)
 class GravesDetectorProfile:
+    detector_mode: str = "v3"
     detection_min_hz: float = 1_200.0
     detection_max_hz: float = 1_600.0
     trigger_db_above_baseline: float = 11.0
@@ -58,6 +59,15 @@ class GravesDetectorProfile:
     event_waterfall_percentile_min: float = 20.0
     event_waterfall_percentile_max: float = 99.8
     review_suppress_below_hz: float = 1_000.0
+    review_preroll_blocks: int = 2
+    v4_min_triggered_frames: int = 2
+    v4_min_active_ratio: float = 0.35
+    v4_min_longest_run_frames: int = 2
+    v4_max_freq_jump_count: int = 2
+    v4_min_band_energy_ratio: float = 0.12
+    v4_min_onset_db: float = 4.0
+    v4_min_score: int = 4
+    v4_continuity_max_delta_hz: float = 23.5
 
 
 @dataclass(slots=True)
