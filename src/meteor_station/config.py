@@ -17,7 +17,7 @@ DEFAULT_IQ_SAMPLE_RATE = 240_000
 DEFAULT_AUDIO_SAMPLE_RATE = 48_000
 DEFAULT_RTL_TCP_PORT = 1234
 DEFAULT_DETECTION_PROFILE = "graves"
-DEFAULT_SDRSHARP_DETECTION_PROFILE = "graves_sdrsharp"
+DEFAULT_SDRSHARP_DETECTION_PROFILE = "graves_sdrsharp_v5"
 
 
 @dataclass(slots=True)
@@ -68,6 +68,10 @@ class GravesDetectorProfile:
     v4_min_onset_db: float = 4.0
     v4_min_score: int = 4
     v4_continuity_max_delta_hz: float = 23.5
+    v5_stationary_max_unique_freqs: int = 2
+    v5_stationary_max_freq_spread_hz: float = 23.5
+    v5_stationary_min_duration_s: float = 0.45
+    v5_stationary_min_active_ratio: float = 0.5
 
 
 @dataclass(slots=True)

@@ -70,6 +70,10 @@ class DetectorConfig:
     v4_min_onset_db: float = 4.0
     v4_min_score: int = 4
     v4_continuity_max_delta_hz: float = 23.5
+    v5_stationary_max_unique_freqs: int = 2
+    v5_stationary_max_freq_spread_hz: float = 23.5
+    v5_stationary_min_duration_s: float = 0.45
+    v5_stationary_min_active_ratio: float = 0.5
 
     @classmethod
     def from_graves_profile(
@@ -125,6 +129,10 @@ class DetectorConfig:
             v4_min_onset_db=profile.v4_min_onset_db,
             v4_min_score=profile.v4_min_score,
             v4_continuity_max_delta_hz=profile.v4_continuity_max_delta_hz,
+            v5_stationary_max_unique_freqs=profile.v5_stationary_max_unique_freqs,
+            v5_stationary_max_freq_spread_hz=profile.v5_stationary_max_freq_spread_hz,
+            v5_stationary_min_duration_s=profile.v5_stationary_min_duration_s,
+            v5_stationary_min_active_ratio=profile.v5_stationary_min_active_ratio,
         )
 
 
@@ -170,7 +178,11 @@ class MeteorEvent:
 
 
 def _artifact_prefix_for_mode(detector_mode: str) -> str:
-    return "event_v4_" if detector_mode == "v4" else "event_v3_"
+    if detector_mode == "v5":
+        return "event_v5_"
+    if detector_mode == "v4":
+        return "event_v4_"
+    return "event_v3_"
 
 
 class MeteorDetector:
@@ -270,6 +282,7 @@ class MeteorDetector:
         band_energy_ratio: float,
         freq_jump_count: int,
         onset_db: float,
+        unique_peak_freq_count: int,
     ) -> tuple[str, int, str]:
         if duration_s > self.config.max_event_duration_s:
             return ("too_long", 0, "duration_above_max")
@@ -278,7 +291,7 @@ class MeteorDetector:
             and freq_spread_hz <= self.config.steady_tone_max_spread_hz
         ):
             return ("steady_tone_rejected", 0, "steady_tone")
-        if self.config.detector_mode != "v4":
+        if self.config.detector_mode not in {"v4", "v5"}:
             if max_near_peak_bins > self.config.max_near_peak_bins:
                 return ("broadband_rejected", 0, "too_many_near_peak_bins")
             return ("meteor_candidate", 0, "v3_thresholds_passed")
@@ -303,9 +316,16 @@ class MeteorDetector:
             return ("impulse_rejected", score, "weak_band_concentration")
         if max_near_peak_bins > self.config.max_near_peak_bins:
             return ("broadband_rejected", score, "too_many_near_peak_bins")
+        if self.config.detector_mode == "v5" and (
+            unique_peak_freq_count <= self.config.v5_stationary_max_unique_freqs
+            and freq_spread_hz <= self.config.v5_stationary_max_freq_spread_hz
+            and duration_s >= self.config.v5_stationary_min_duration_s
+            and active_ratio >= self.config.v5_stationary_min_active_ratio
+        ):
+            return ("stationary_tone_rejected", score, "fixed_bin_tone_block")
         if score < self.config.v4_min_score:
             return ("weak_narrowband_rejected", score, "insufficient_v4_score")
-        return ("meteor_candidate", score, "v4_score_passed")
+        return ("meteor_candidate", score, f"{self.config.detector_mode}_score_passed")
 
     def process_block(self, block: np.ndarray, timestamp: float | None = None) -> list[MeteorEvent]:
         x = np.asarray(block, dtype=np.float32)
@@ -478,6 +498,7 @@ class MeteorDetector:
         max_near_peak_bins = int(np.max(self.event_near_peak_bins_values))
         band_db_at_start = float(self.event_band_db_values[0])
         active_ratio = self.event_triggered_frames / max(len(self.event_frames), 1)
+        unique_peak_freq_count = len({round(freq, 1) for freq in self.event_peak_freqs})
         longest_run_frames, freq_jump_count = _continuity_metrics(
             self.event_peak_freqs,
             max_delta_hz=self.config.v4_continuity_max_delta_hz,
@@ -503,6 +524,7 @@ class MeteorDetector:
                 band_energy_ratio=band_energy_ratio,
                 freq_jump_count=freq_jump_count,
                 onset_db=onset_db,
+                unique_peak_freq_count=unique_peak_freq_count,
             )
 
         image_file = ""

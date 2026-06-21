@@ -16,6 +16,7 @@ from fixtures import (
     impulse_false_positive_fixture,
     meteor_candidate_fixture,
     repeated_impulse_fixture,
+    stationary_carrier_false_positive_fixture,
     weak_noise_spike_fixture,
 )
 
@@ -135,6 +136,26 @@ class DetectorTests(unittest.TestCase):
         )
         self.assertTrue(events)
         self.assertNotEqual(events[0].event_type, "meteor_candidate")
+
+    def test_v4_stationary_carrier_still_passes(self):
+        signal = stationary_carrier_false_positive_fixture(self.sample_rate)
+        events, _ = self._run_detector(signal, detector_mode="v4")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "meteor_candidate")
+
+    def test_v5_stationary_carrier_is_rejected(self):
+        signal = stationary_carrier_false_positive_fixture(self.sample_rate)
+        events, rows = self._run_detector(signal, detector_mode="v5")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "stationary_tone_rejected")
+        self.assertEqual(events[0].decision_reason, "fixed_bin_tone_block")
+        self.assertEqual(rows[1][23], "v5")
+
+    def test_v5_drifting_meteor_remains_candidate(self):
+        signal = drifting_meteor_fixture(self.sample_rate)
+        events, _ = self._run_detector(signal, detector_mode="v5")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "meteor_candidate")
 
 
 if __name__ == "__main__":

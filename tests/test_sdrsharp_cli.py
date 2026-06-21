@@ -137,6 +137,29 @@ class SdrsharpCliTests(unittest.TestCase):
         self.assertEqual(rows[1][23], "v4")
         self.assertTrue((output_dir / "event_v4_00001.png").exists())
 
+    def test_detector_mode_override_uses_v5_outputs(self):
+        wav_path = self.tmp_dir / "candidate_v5.wav"
+        output_dir = self.tmp_dir / "v5_output"
+        write_wav(wav_path, meteor_candidate_fixture(self.sample_rate), self.sample_rate)
+
+        argv = [
+            "meteor-station-sdrsharp-detect",
+            "--input-wav",
+            str(wav_path),
+            "--output-dir",
+            str(output_dir),
+            "--detector-mode",
+            "v5",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            exit_code = sdrsharp_detect.main()
+
+        self.assertEqual(exit_code, 0)
+        with (output_dir / "events_v3.csv").open(encoding="utf-8") as handle:
+            rows = list(csv.reader(handle))
+        self.assertEqual(rows[1][23], "v5")
+        self.assertTrue((output_dir / "event_v5_00001.png").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

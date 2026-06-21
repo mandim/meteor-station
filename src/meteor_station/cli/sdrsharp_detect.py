@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--detector-mode",
-        choices=("v3", "v4"),
+        choices=("v3", "v4", "v5"),
         help="Override detector mode independently of the selected detector profile.",
     )
     parser.add_argument(

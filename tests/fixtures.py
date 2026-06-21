@@ -12,8 +12,14 @@ def meteor_candidate_fixture(sample_rate: int) -> np.ndarray:
     rng = np.random.default_rng(101)
     block_aligned_samples = 12 * 4096
     noise = 0.0015 * rng.standard_normal(block_aligned_samples).astype(np.float32)
-    burst = tone(sample_rate, 0.35, 1500.0, 0.25)
-    tail = tone(sample_rate, 0.08, 1500.0, 0.03)
+    duration_s = 0.35
+    t = np.arange(int(sample_rate * duration_s), dtype=np.float32) / sample_rate
+    start_freq = 1488.0
+    stop_freq = 1516.0
+    burst = 0.25 * np.sin(
+        2.0 * np.pi * (start_freq * t + ((stop_freq - start_freq) / (2.0 * duration_s)) * t * t)
+    ).astype(np.float32)
+    tail = tone(sample_rate, 0.08, 1510.0, 0.03)
     quiet = np.zeros(sample_rate // 3, dtype=np.float32)
     return np.concatenate([noise, burst, tail, quiet])
 
@@ -70,3 +76,11 @@ def drifting_meteor_fixture(sample_rate: int) -> np.ndarray:
     tail = tone(sample_rate, 0.10, 1510.0, 0.03)
     quiet = np.zeros(sample_rate // 4, dtype=np.float32)
     return np.concatenate([noise, sweep, tail, quiet])
+
+
+def stationary_carrier_false_positive_fixture(sample_rate: int) -> np.ndarray:
+    rng = np.random.default_rng(707)
+    noise = 0.0012 * rng.standard_normal(4096 * 10).astype(np.float32)
+    burst = tone(sample_rate, 0.62, 1546.875, 0.22)
+    quiet = np.zeros(sample_rate // 3, dtype=np.float32)
+    return np.concatenate([noise, burst, quiet])
